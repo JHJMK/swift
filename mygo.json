@@ -1,0 +1,8 @@
+{
+  "name": "语燕",
+  "slug": "swift",
+  "identifier": "com.jjk.swift",
+  "version": "0.1.0",
+  "icon": "resources/swift.png",
+  "out": "build"
+}

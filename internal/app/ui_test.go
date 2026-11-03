@@ -1,0 +1,766 @@
+package app
+
+import (
+	"archive/zip"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/richtext"
+)
+
+func newTestApp(t *testing.T) (*app, string, string) {
+	t.Helper()
+	root := t.TempDir()
+	v, err := OpenVault(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kb, err := v.CreateKnowledgeBase("我的知识库")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel, err := v.CreateDoc(kb, "开始")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.WriteDoc(rel, "# 标题\n\n正文内容\n"); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &Config{Workspace: root}, vault: v, openDirs: map[string]*bool{}}
+	a.refreshTree()
+	return a, root, rel
+}
+
+func TestUIViewOpensDocument(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	tt := ui.NewTester(a.view, 1180, 760)
+
+	if !tt.HasText("知识库") || !tt.HasText("工作台") {
+		t.Fatalf("main view not shown: %q", tt.Texts())
+	}
+	// The knowledge base column holds the document tree.
+	if err := tt.Click("我的知识库"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("开始"); err != nil {
+		t.Fatal(err)
+	}
+	if a.doc == nil || a.doc.Rel != rel {
+		t.Fatalf("document not opened: %+v", a.doc)
+	}
+	if !tt.HasText("已保存") {
+		t.Fatalf("editor not shown: %q", tt.Texts())
+	}
+
+	// The toolbar edits the open document.
+	if err := tt.Click("重命名"); err != nil {
+		t.Fatal(err)
+	}
+	if a.prompt == nil || a.prompt.Title != "重命名" {
+		t.Fatalf("rename prompt not shown: %+v", a.prompt)
+	}
+	if err := tt.Click("取消"); err != nil {
+		t.Fatal(err)
+	}
+	if a.prompt != nil {
+		t.Fatal("prompt not closed")
+	}
+
+	if err := tt.Click("工作台"); err != nil {
+		t.Fatal(err)
+	}
+	createDocFromWorkbench(t, tt)
+	if a.doc == nil || !a.doc.ShowTitle || !untitledTitle(a.doc.Title) {
+		t.Fatalf("untitled page not shown: %+v", a.doc)
+	}
+
+	if err := tt.Click("设置"); err != nil {
+		t.Fatal(err)
+	}
+	if !a.settingsOpen {
+		t.Fatal("settings not opened")
+	}
+	if err := tt.Click("完成"); err != nil {
+		t.Fatal(err)
+	}
+	if a.settingsOpen {
+		t.Fatal("settings not closed")
+	}
+}
+
+func TestPasteMenuFollowsEditorFocus(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	a.pasteItem = &mygo.MenuItem{Label: "粘贴", Disabled: true}
+	tt := ui.NewTester(a.view, 1180, 760)
+
+	if err := tt.Click("我的知识库"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("开始"); err != nil {
+		t.Fatal(err)
+	}
+	if a.pasteItem.IsEnabled() {
+		t.Fatal("paste enabled before the editor has the focus")
+	}
+	tt.ClickAt(700, 300) // the editor's page
+	if !a.pasteItem.IsEnabled() {
+		t.Fatal("paste not enabled while the editor has the focus")
+	}
+	if err := tt.Click("工作台"); err != nil {
+		t.Fatal(err)
+	}
+	if a.pasteItem.IsEnabled() {
+		t.Fatal("paste still enabled after leaving the editor")
+	}
+}
+
+// Selecting a knowledge base opens its first document, and 首页 shows the
+// knowledge base's own page again.
+func TestSelectingKnowledgeBaseOpensFirstDoc(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	tt := ui.NewTester(a.view, 1180, 760)
+
+	if err := tt.Click("我的知识库"); err != nil {
+		t.Fatal(err)
+	}
+	if a.doc == nil || a.doc.Rel != rel {
+		t.Fatalf("first document not opened: %+v", a.doc)
+	}
+	if !tt.HasText("已保存") {
+		t.Fatalf("editor not shown: %q", tt.Texts())
+	}
+
+	if err := tt.Click("首页"); err != nil {
+		t.Fatal(err)
+	}
+	if a.doc != nil {
+		t.Fatalf("document still open: %+v", a.doc)
+	}
+	if a.selected != "我的知识库" || !a.selectedIsDir {
+		t.Fatalf("knowledge base not selected: %q %v", a.selected, a.selectedIsDir)
+	}
+	if !tt.HasText("新建文档") {
+		t.Fatalf("knowledge base home not shown: %q", tt.Texts())
+	}
+}
+
+// The plus button of the knowledge base opens a menu drawn in the window,
+// whose items run their actions and close it.
+func TestKnowledgeBaseMenu(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	tt := ui.NewTester(a.view, 1180, 760)
+
+	if err := tt.Click("我的知识库"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("新建"); err != nil {
+		t.Fatal(err)
+	}
+	if !a.kbMenuOpen {
+		t.Fatal("menu not open")
+	}
+	for _, label := range []string{"新建文档", "新建目录", "导入", "重命名知识库"} {
+		if !tt.HasText(label) {
+			t.Fatalf("menu lacks %q: %q", label, tt.Texts())
+		}
+	}
+
+	if err := tt.Click("新建目录"); err != nil {
+		t.Fatal(err)
+	}
+	if a.kbMenuOpen {
+		t.Fatal("menu closed on choosing an item")
+	}
+	if a.prompt == nil || a.prompt.Title != "新建目录" {
+		t.Fatalf("prompt not shown: %+v", a.prompt)
+	}
+	if err := tt.Click("取消"); err != nil {
+		t.Fatal(err)
+	}
+
+	// A press elsewhere closes the menu.
+	if err := tt.Click("新建"); err != nil {
+		t.Fatal(err)
+	}
+	tt.ClickAt(900, 500)
+	if a.kbMenuOpen {
+		t.Fatal("menu did not close on a press outside it")
+	}
+}
+
+// Renaming the knowledge base of the open document keeps it open, saves
+// its edits first, and leaves no copy behind under the old name.
+func TestRenameSavesBeforeMoving(t *testing.T) {
+	a, root, rel := newTestApp(t)
+	a.openDoc(rel)
+	a.doc.Saved = "" // an edit to write
+	a.doc.Dirty = true
+
+	a.askRename("我的知识库")
+	if a.prompt == nil {
+		t.Fatal("rename prompt not shown")
+	}
+	if err := a.prompt.OnOK("新名字"); err != nil {
+		t.Fatal(err)
+	}
+	if a.doc == nil || !strings.HasPrefix(a.doc.Rel, "新名字/") {
+		t.Fatalf("document not moved: %+v", a.doc)
+	}
+	if a.selected != a.doc.Rel {
+		t.Fatalf("selected is %q, want %q", a.selected, a.doc.Rel)
+	}
+	if _, _, err := a.vault.ReadDoc(a.doc.Rel); err != nil {
+		t.Fatalf("moved document unreadable: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "我的知识库")); !os.IsNotExist(err) {
+		t.Fatalf("old knowledge base stayed behind: %v", err)
+	}
+}
+
+// A new document is untitled and shows the large title field of 语雀's
+// page; the title typed there renames it.
+func TestNewDocumentTitle(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	tt := ui.NewTester(a.view, 1180, 760)
+
+	createDocFromWorkbench(t, tt)
+	if a.doc == nil || !a.doc.ShowTitle || !untitledTitle(a.doc.Title) {
+		t.Fatalf("untitled page not shown: %+v", a.doc)
+	}
+	if a.doc.TitleDraft != "" {
+		t.Fatalf("title field is not empty: %q", a.doc.TitleDraft)
+	}
+
+	tt.Type("我的新文档")
+	tt.Key(0, ui.KeyEnter)
+	tt.Frame()
+	if a.doc.Title != "我的新文档" {
+		t.Fatalf("title not applied: %q", a.doc.Title)
+	}
+	if want := "我的知识库/我的新文档.md"; a.doc.Rel != want {
+		t.Fatalf("document is at %q, want %q", a.doc.Rel, want)
+	}
+	if a.selected != a.doc.Rel {
+		t.Fatalf("selected is %q, want %q", a.selected, a.doc.Rel)
+	}
+	if _, _, err := a.vault.ReadDoc(a.doc.Rel); err != nil {
+		t.Fatalf("renamed document unreadable: %v", err)
+	}
+	if !a.doc.ShowTitle {
+		t.Fatal("title field closed after the title was applied")
+	}
+}
+
+// Leaving the title field applies the title too, without Enter.
+func TestTitleCommitsOnBlur(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	tt := ui.NewTester(a.view, 1180, 760)
+
+	createDocFromWorkbench(t, tt)
+	tt.Type("标题二号")
+	tt.ClickAt(900, 420) // the page below the title
+	tt.Frame()
+	if a.doc == nil || a.doc.Title != "标题二号" {
+		t.Fatalf("title not applied on blur: %+v", a.doc)
+	}
+}
+
+// A title typed on the page is saved before another document opens.
+func TestTitleSavesWhenLeavingDocument(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	tt := ui.NewTester(a.view, 1180, 760)
+
+	createDocFromWorkbench(t, tt)
+	tt.Type("离开前标题")
+	if err := tt.Click("开始"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.findNode("我的知识库/离开前标题.md") == nil {
+		t.Fatalf("typed title not saved: %q", tt.Texts())
+	}
+	if a.doc == nil || a.doc.Rel != "我的知识库/开始.md" {
+		t.Fatalf("other document not opened: %+v", a.doc)
+	}
+}
+
+// Renaming an untitled document from the header keeps its large title
+// field showing the new name, not the placeholder.
+func TestRenameUntitledDocument(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	tt := ui.NewTester(a.view, 1180, 760)
+
+	createDocFromWorkbench(t, tt)
+	if err := tt.Click("重命名"); err != nil {
+		t.Fatal(err)
+	}
+	if a.prompt == nil {
+		t.Fatal("rename prompt not shown")
+	}
+	a.prompt.Value = "正式标题"
+	if err := tt.Click("保存"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.doc == nil || a.doc.Title != "正式标题" {
+		t.Fatalf("document not renamed: %+v", a.doc)
+	}
+	if !a.doc.ShowTitle || a.doc.TitleDraft != "正式标题" {
+		t.Fatalf("title field lost the name: %+v", a.doc)
+	}
+}
+
+// A document's row has its own actions, which differ from a folder's.
+func TestDocumentRowMenu(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	tt := ui.NewTester(a.view, 1180, 760)
+
+	if err := tt.Click("我的知识库"); err != nil {
+		t.Fatal(err)
+	}
+	if a.doc == nil || a.doc.Rel != rel {
+		t.Fatalf("document not opened: %+v", a.doc)
+	}
+	if err := tt.Click("更多操作"); err != nil {
+		t.Fatal(err)
+	}
+	if a.rowMenu != rel {
+		t.Fatalf("row menu not open: %q", a.rowMenu)
+	}
+	for _, want := range []string{"重命名", "复制链接", "置顶文档", "导出 Markdown（含图片）", "导出为 PDF", "在 Finder 中显示", "删除"} {
+		if !tt.HasText(want) {
+			t.Fatalf("document menu lacks %q", want)
+		}
+	}
+	if tt.HasText("新建目录") {
+		t.Fatal("document menu has a folder action")
+	}
+	if err := tt.Click("重命名"); err != nil {
+		t.Fatal(err)
+	}
+	if a.prompt == nil || a.prompt.Title != "重命名" {
+		t.Fatalf("rename prompt not shown: %+v", a.prompt)
+	}
+	if a.rowMenu != "" {
+		t.Fatalf("row menu stayed open: %q", a.rowMenu)
+	}
+	if err := tt.Click("取消"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A folder's row menu offers no document-only actions, and its add menu
+// creates a document, a group or imports a Markdown file.
+func TestFolderRowMenu(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	folder, err := a.vault.CreateFolder("我的知识库", "目录甲")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.refreshTree()
+	tt := ui.NewTester(a.view, 1180, 760)
+
+	if err := tt.Click("我的知识库"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("目录甲"); err != nil {
+		t.Fatal(err)
+	}
+	if a.selected != folder || a.doc != nil {
+		t.Fatalf("folder not chosen: %q %+v", a.selected, a.doc)
+	}
+	if err := tt.Click("更多操作"); err != nil {
+		t.Fatal(err)
+	}
+	if a.rowMenu != folder {
+		t.Fatalf("row menu not open: %q", a.rowMenu)
+	}
+	for _, want := range []string{"重命名", "在 Finder 中显示", "删除"} {
+		if !tt.HasText(want) {
+			t.Fatalf("folder menu lacks %q", want)
+		}
+	}
+	for _, unwanted := range []string{"复制链接", "置顶文档", "移出目录"} {
+		if tt.HasText(unwanted) {
+			t.Fatalf("folder menu has %q", unwanted)
+		}
+	}
+	if err := tt.Click("更多操作"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tt.Click("添加"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"文档", "分组", "导入"} {
+		if !tt.HasText(want) {
+			t.Fatalf("add menu lacks %q", want)
+		}
+	}
+	if err := tt.Click("文档"); err != nil {
+		t.Fatal(err)
+	}
+	if a.doc == nil || !untitledTitle(a.doc.Title) || !strings.HasPrefix(a.doc.Rel, folder+"/") {
+		t.Fatalf("document not created in the folder: %+v", a.doc)
+	}
+}
+
+// Pinning a document moves it to the top of its folder, and moving it out
+// takes it up one level.
+func TestMoveAndPinDocument(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	folder, err := a.vault.CreateFolder("我的知识库", "目录甲")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.vault.CreateDoc(folder, "甲"); err != nil {
+		t.Fatal(err)
+	}
+	second, err := a.vault.CreateDoc(folder, "乙")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.refreshTree()
+
+	if n := a.findNode(second); n != nil {
+		a.pinDoc(n)
+	}
+	a.refreshTree()
+	dir := a.findNode(folder)
+	if dir == nil || len(dir.Children) < 2 || dir.Children[0].Name != "乙.md" {
+		t.Fatalf("pin failed: %+v", dir)
+	}
+
+	if n := a.findNode(folder + "/乙.md"); n != nil {
+		a.moveOut(n)
+	}
+	a.refreshTree()
+	if a.findNode("我的知识库/乙.md") == nil {
+		t.Fatalf("move out failed: %+v", a.findNode(folder))
+	}
+}
+
+// A document can be a parent: its row menu creates a child document that
+// the tree shows under it.
+func TestDocumentAsParent(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	tt := ui.NewTester(a.view, 1180, 760)
+
+	if err := tt.Click("我的知识库"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("添加"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"文档", "分组", "导入"} {
+		if !tt.HasText(want) {
+			t.Fatalf("add menu lacks %q: %q", want, tt.Texts())
+		}
+	}
+	if err := tt.Click("文档"); err != nil {
+		t.Fatal(err)
+	}
+	if a.doc == nil || !untitledTitle(a.doc.Title) {
+		t.Fatalf("child document not created: %+v", a.doc)
+	}
+	if want := "我的知识库/开始/"; !strings.HasPrefix(a.doc.Rel, want) {
+		t.Fatalf("child is at %q, want under %q", a.doc.Rel, want)
+	}
+	parent := a.findNode(rel)
+	if parent == nil || len(parent.Children) != 1 {
+		t.Fatalf("parent document children are %+v", parent)
+	}
+	if !tt.HasText("无标题文档") {
+		t.Fatalf("child document not shown in the tree: %q", tt.Texts())
+	}
+}
+
+// The tree goes four levels deep, and no further.
+func TestTreeDepthLimit(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	kb := "我的知识库"
+	first, err := a.vault.CreateDoc(kb, "一级")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d1, _ := a.vault.EnsureDocDir(first)
+	second, _ := a.vault.CreateDoc(d1, "二级")
+	d2, _ := a.vault.EnsureDocDir(second)
+	third, _ := a.vault.CreateDoc(d2, "三级")
+	d3, _ := a.vault.EnsureDocDir(third)
+	fourth, _ := a.vault.CreateDoc(d3, "四级")
+	a.refreshTree()
+
+	if !a.canNest(a.findNode(third)) {
+		t.Fatal("third level cannot hold children")
+	}
+	if a.canNest(a.findNode(fourth)) {
+		t.Fatal("fourth level can hold children")
+	}
+	for _, act := range a.nodeActions(a.findNode(fourth)) {
+		if act.label == "新建子文档" {
+			t.Fatal("fourth level offers a child action")
+		}
+	}
+	before := a.findNode(fourth).Children
+	a.newChildDoc(a.findNode(fourth))
+	if len(a.findNode(fourth).Children) != len(before) {
+		t.Fatal("fourth level created a child")
+	}
+}
+
+// The knowledge base's row in the sidebar offers renaming, exporting and
+// deleting it.
+func TestSidebarKnowledgeBaseMenu(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	tt := ui.NewTester(a.view, 1180, 760)
+
+	if err := tt.Click("我的知识库"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("知识库操作"); err != nil {
+		t.Fatal(err)
+	}
+	if a.rowMenu != "我的知识库" {
+		t.Fatalf("knowledge base menu not open: %q", a.rowMenu)
+	}
+	for _, want := range []string{"重命名", "导出", "删除"} {
+		if !tt.HasText(want) {
+			t.Fatalf("knowledge base menu lacks %q", want)
+		}
+	}
+	if err := tt.Click("删除"); err != nil {
+		t.Fatal(err)
+	}
+	if a.confirm == nil || !strings.Contains(a.confirm.Title, "我的知识库") {
+		t.Fatalf("knowledge base delete confirm not shown: %+v", a.confirm)
+	}
+	if a.rowMenu != "" {
+		t.Fatalf("knowledge base menu stayed open: %q", a.rowMenu)
+	}
+	if err := tt.Click("取消"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The add menu's group item asks for a group, in the words it shows.
+func TestAddGroup(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	tt := ui.NewTester(a.view, 1180, 760)
+
+	if err := tt.Click("我的知识库"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("添加"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("分组"); err != nil {
+		t.Fatal(err)
+	}
+	if a.prompt == nil || a.prompt.Title != "新建分组" {
+		t.Fatalf("group prompt not shown: %+v", a.prompt)
+	}
+	if err := tt.Click("取消"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The tree menu copies a resource, shallow or deep, and pastes it under a
+// folder.
+func TestCopyPasteMenu(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	if _, err := a.vault.CreateFolder("我的知识库", "归档"); err != nil {
+		t.Fatal(err)
+	}
+	a.refreshTree()
+	tt := ui.NewTester(a.view, 1180, 760)
+
+	if err := tt.Click("我的知识库"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("更多操作"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"仅复制本资源", "复制全部子资源"} {
+		if !tt.HasText(want) {
+			t.Fatalf("row menu lacks %q", want)
+		}
+	}
+	if err := tt.Click("仅复制本资源"); err != nil {
+		t.Fatal(err)
+	}
+	if a.clipboard == nil || a.clipboard.deep {
+		t.Fatalf("shallow copy not put on the clipboard: %+v", a.clipboard)
+	}
+
+	if err := tt.Click("归档"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("更多操作"); err != nil {
+		t.Fatal(err)
+	}
+	if !tt.HasText("粘贴") {
+		t.Fatalf("folder menu lacks paste: %q", tt.Texts())
+	}
+	if err := tt.Click("粘贴"); err != nil {
+		t.Fatal(err)
+	}
+	if a.findNode("我的知识库/归档/开始.md") == nil {
+		t.Fatalf("pasted document missing: %+v", a.findNode("我的知识库/归档"))
+	}
+}
+
+// Right clicking a row opens the same menu as its More button.
+func TestRightClickOpensRowMenu(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	tt := ui.NewTester(a.view, 1180, 760)
+	if err := tt.Click("我的知识库"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.RightClick("开始"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.rowMenu != rel {
+		t.Fatalf("right click did not open the row menu: %q", a.rowMenu)
+	}
+	if !tt.HasText("仅复制本资源") {
+		t.Fatalf("right click menu lacks the row actions: %q", tt.Texts())
+	}
+}
+
+// Enter in the page's title puts the caret at the start of the text.
+func TestTitleEnterFocusesBody(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	tt := ui.NewTester(a.view, 1180, 760)
+	createDocFromWorkbench(t, tt)
+	tt.Type("新标题")
+	tt.Key(0, ui.KeyEnter)
+	tt.Frame()
+	if a.doc == nil || a.doc.Title != "新标题" {
+		t.Fatalf("title not applied: %+v", a.doc)
+	}
+	if !a.editorFocused {
+		t.Fatal("the text is not focused after the title")
+	}
+	if anchor, caret := a.doc.Doc.Selection(); anchor != 0 || caret != 0 {
+		t.Fatalf("caret is at %d, %d, want the start", anchor, caret)
+	}
+}
+
+// The empty page's prompt goes away once a block is inserted, even with
+// no text yet.
+func TestBodyPlaceholderHidesForBlocks(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	tt := ui.NewTester(a.view, 1180, 760)
+	createDocFromWorkbench(t, tt)
+	if bodyPlaceholder(a.doc) == "" {
+		t.Fatal("empty page has no prompt")
+	}
+	a.doc.Doc.ToggleList(richtext.Tasks)
+	if bodyPlaceholder(a.doc) != "" {
+		t.Fatal("prompt stays over a task list")
+	}
+	a.doc.Doc.ToggleList(richtext.Tasks)
+	if bodyPlaceholder(a.doc) == "" {
+		t.Fatal("prompt did not come back")
+	}
+	a.doc.Doc.ToggleQuote()
+	if bodyPlaceholder(a.doc) != "" {
+		t.Fatal("prompt stays over a quotation")
+	}
+}
+
+// Right clicking the text offers the two paste commands.
+func TestEditorContextMenu(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	a.openDoc(rel)
+	tt := ui.NewTester(a.view, 1180, 760)
+	tt.Frame()
+	tt.RightClickAt(700, 300)
+	tt.Frame()
+	for _, want := range []string{"粘贴", "粘贴并匹配样式"} {
+		if !tt.HasText(want) {
+			t.Fatalf("editor menu lacks %q: %q", want, tt.Texts())
+		}
+	}
+}
+
+// createDocFromWorkbench creates a document through the workbench card
+// and its location picker, choosing the default knowledge base.
+func createDocFromWorkbench(t *testing.T, tt *ui.Tester) {
+	t.Helper()
+	if err := tt.Click("新建文档"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("创建"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+}
+
+// Exporting Markdown makes a zip of the document and the pictures it
+// shows, with the Mermaid source kept and its preview left out.
+func TestExportMarkdownZip(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	asset, err := a.vault.ImportAssetBytes(rel, "图.png", testPNG(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.vault.WriteDoc(rel, "# 图\n\n![图]("+asset+")\n\n```mermaid\ngraph TD\n  A --> B\n```\n"); err != nil {
+		t.Fatal(err)
+	}
+	a.openDoc(rel)
+	dst := filepath.Join(t.TempDir(), "out.zip")
+	if err := a.writeMarkdownZip(dst, "开始"); err != nil {
+		t.Fatal(err)
+	}
+	r, err := zip.OpenReader(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	names := map[string]bool{}
+	var md string
+	for _, f := range r.File {
+		names[f.Name] = true
+		if f.Name == "开始/开始.md" {
+			rc, err := f.Open()
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, err := io.ReadAll(rc)
+			rc.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			md = string(b)
+		}
+	}
+	if !names["开始/开始.md"] {
+		t.Fatalf("zip lacks the Markdown: %v", names)
+	}
+	if !strings.Contains(md, "开始.assets/") {
+		t.Fatalf("Markdown does not point at the exported assets: %q", md)
+	}
+	if !strings.Contains(md, "```mermaid") {
+		t.Fatalf("Markdown lost the Mermaid source: %q", md)
+	}
+	if strings.Contains(md, "Mermaid 图表") {
+		t.Fatalf("Markdown kept the Mermaid preview: %q", md)
+	}
+	found := false
+	for name := range names {
+		if strings.HasPrefix(name, "开始/开始.assets/") && strings.HasSuffix(name, ".png") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("zip lacks the image: %v", names)
+	}
+}

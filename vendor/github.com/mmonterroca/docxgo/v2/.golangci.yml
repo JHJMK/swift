@@ -1,0 +1,52 @@
+version: '2'
+
+linters:
+  # Disable all linters by default, then enable specific ones
+  default: none
+  
+  enable:
+    - errcheck
+    - gocritic
+    - govet
+    - ineffassign
+    - revive
+    - staticcheck
+    - unused
+    - unparam
+    - exhaustive
+    - misspell
+    - unconvert
+  
+  # Linter-specific settings
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt:.*
+      check-blank: false
+    
+    revive:
+      rules:
+        - name: package-comments
+          disabled: true
+  
+  # Exclude error checking issues in example files only
+  # Examples are demonstration code where verbosity from error handling would obscure the API being demonstrated
+  # Production code in cmd/ and internal/ must handle all errors properly
+  exclusions:
+    rules:
+      - path: ^examples/
+        linters:
+          - errcheck
+          - gocritic
+          - revive
+          - staticcheck
+
+run:
+  timeout: 5m
+  tests: false
+
+output:
+  formats:
+    text:
+      print-linter-name: true
+      print-issued-lines: true

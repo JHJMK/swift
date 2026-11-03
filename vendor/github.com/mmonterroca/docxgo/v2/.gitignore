@@ -1,0 +1,32 @@
+docxlib
+.vscode/
+*.docx
+!internal/reader/testdata/**/*.docx
+/*.xml
+.DS_Store
+docxlib/
+docxgo
+docx_debug/
+bin/
+coverage.out
+coverage.html
+DocxValidator/bin/
+DocxValidator/obj/
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Compiled binaries generated inside numbered examples
+examples/[0-9][0-9]_*/*
+!examples/[0-9][0-9]_*/**/*.go
+!examples/[0-9][0-9]_*/**/*.md
+
+# Compiled example binaries built to the repo root
+# (e.g. `go build ./examples/13_themes/04_tech_architecture` from the root)
+/[0-9][0-9]_*
