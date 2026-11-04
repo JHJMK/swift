@@ -104,8 +104,16 @@ func (a *app) addMermaidPreviews(text richtext.Text, docRel string) (richtext.Te
 		return text, previews
 	}
 	kb := strings.Split(docRel, "/")[0]
-	assets := filepath.Join(a.vault.Root, kb, ".assets")
-	docDir := filepath.Dir(filepath.Join(a.vault.Root, filepath.FromSlash(docRel)))
+	kbAbs, err := a.vault.Abs(kb)
+	if err != nil {
+		return text, previews
+	}
+	assets := filepath.Join(kbAbs, ".assets")
+	docAbs, err := a.vault.Abs(docRel)
+	if err != nil {
+		return text, previews
+	}
+	docDir := filepath.Dir(docAbs)
 	cli := mermaidCLI()
 	var paras []richtext.Paragraph
 	for _, p := range text.Paragraphs() {
@@ -123,21 +131,54 @@ func (a *app) addMermaidPreviews(text richtext.Text, docRel string) (richtext.Te
 			lines = append(lines, paraText(paras[j]))
 			j++
 		}
-		if img, url, ok := renderMermaid(cli, assets, docDir, strings.Join(lines, "\n")); ok {
+		src := strings.Join(lines, "\n")
+		if img, url, ok := renderMermaid(cli, assets, docDir, src); ok {
 			previews[url] = true
-			out = append(out, richtext.Paragraph{Style: richtext.ParagraphStyle{Align: ui.Center}, Runs: []richtext.Run{{
-				Text: string(richtext.ObjectReplacement),
-				Attributes: richtext.Attributes{Attachment: &richtext.Attachment{
-					Image: img,
-					URL:   url,
-					Name:  "Mermaid 图表",
-				}},
-			}}})
+			out = append(out, mermaidPreview(img, url))
 		}
 		out = append(out, paras[i:j]...)
 		i = j - 1
 	}
 	return richtext.TextOf(out...), previews
+}
+
+func mermaidPreview(img *ui.Bitmap, url string) richtext.Paragraph {
+	return richtext.Paragraph{Style: richtext.ParagraphStyle{Align: ui.Center}, Runs: []richtext.Run{{
+		Text: string(richtext.ObjectReplacement),
+		Attributes: richtext.Attributes{Attachment: &richtext.Attachment{
+			Image: img,
+			URL:   url,
+			Name:  "Mermaid 图表",
+		}},
+	}}}
+}
+
+// renderMermaidPNG renders src to a scaled PNG.
+func renderMermaidPNG(cli, src string) ([]byte, bool) {
+	if cli == "" {
+		return nil, false
+	}
+	dir, err := os.MkdirTemp("", "swift-mermaid-")
+	if err != nil {
+		return nil, false
+	}
+	defer os.RemoveAll(dir)
+	in := filepath.Join(dir, "figure.mmd")
+	out := filepath.Join(dir, "figure.png")
+	if err := os.WriteFile(in, []byte(src), 0o644); err != nil {
+		return nil, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, cli, "-i", in, "-o", out, "-b", "white", "--size", "1600", "-q")
+	if err := cmd.Run(); err != nil {
+		return nil, false
+	}
+	png, err := os.ReadFile(out)
+	if err != nil {
+		return nil, false
+	}
+	return scalePNG(png, 900, 420), true
 }
 
 // renderMermaid renders src to a PNG cached in assets, and returns it with
@@ -147,34 +188,14 @@ func renderMermaid(cli, assets, docDir, src string) (*ui.Bitmap, string, bool) {
 	name := "mermaid-" + hex.EncodeToString(sum[:8]) + ".png"
 	path := filepath.Join(assets, name)
 	if _, err := os.Stat(path); err != nil {
-		if cli == "" {
+		png, ok := renderMermaidPNG(cli, src)
+		if !ok {
 			return nil, "", false
 		}
 		if err := os.MkdirAll(assets, 0o755); err != nil {
 			return nil, "", false
 		}
-		dir, err := os.MkdirTemp("", "swift-mermaid-")
-		if err != nil {
-			return nil, "", false
-		}
-		defer os.RemoveAll(dir)
-		in := filepath.Join(dir, "figure.mmd")
-		out := filepath.Join(dir, "figure.png")
-		if err := os.WriteFile(in, []byte(src), 0o644); err != nil {
-			return nil, "", false
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, cli, "-i", in, "-o", out, "-b", "white", "--size", "1600", "-q")
-		if err := cmd.Run(); err != nil {
-			return nil, "", false
-		}
-		rendered, err := os.ReadFile(out)
-		if err != nil {
-			return nil, "", false
-		}
-		rendered = scalePNG(rendered, 900, 420)
-		if err := os.WriteFile(path, rendered, 0o644); err != nil {
+		if err := os.WriteFile(path, png, 0o644); err != nil {
 			return nil, "", false
 		}
 	}

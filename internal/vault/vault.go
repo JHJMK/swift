@@ -20,10 +20,11 @@ import (
 )
 
 const (
-	metaDirName    = ".swift"
-	orderFileName  = "order.json"
-	recentFileName = "recent.json"
-	trashDirName   = "trash"
+	metaDirName      = ".swift"
+	externalFileName = "external.json"
+	orderFileName    = "order.json"
+	recentFileName   = "recent.json"
+	trashDirName     = "trash"
 )
 
 // Node is a knowledge base, folder or document in the vault.
@@ -82,6 +83,9 @@ type RecentEntry struct {
 type Vault struct {
 	Root  string
 	Order map[string][]string // directory rel path -> entry names
+	// External maps a knowledge base's name to a folder outside the vault
+	// that it reads where it is.
+	External map[string]string
 }
 
 // OpenVault opens root as a vault, creating it and its metadata folder if
@@ -97,8 +101,9 @@ func OpenVault(root string) (*Vault, error) {
 	if err := os.MkdirAll(filepath.Join(abs, metaDirName), 0o755); err != nil {
 		return nil, err
 	}
-	v := &Vault{Root: abs, Order: map[string][]string{}}
+	v := &Vault{Root: abs, Order: map[string][]string{}, External: map[string]string{}}
 	v.loadOrder()
+	v.loadExternal()
 	return v, nil
 }
 
@@ -112,6 +117,16 @@ func (v *Vault) Tree() ([]*Node, error) {
 			continue
 		}
 		roots = append(roots, v.scanNode(name, name, true))
+	}
+	var names []string
+	for name := range v.External {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if info, err := os.Stat(v.External[name]); err == nil && info.IsDir() {
+			roots = append(roots, v.scanNode(name, name, true))
+		}
 	}
 	return roots, nil
 }
@@ -130,8 +145,12 @@ func (v *Vault) scanNode(rel, name string, isDir bool) *Node {
 			docs[strings.TrimSuffix(child, filepath.Ext(child))] = true
 		}
 	}
+	parentAbs, err := v.abs(rel)
+	if err != nil {
+		return n
+	}
 	for _, child := range names {
-		abs := filepath.Join(v.Root, filepath.FromSlash(rel), child)
+		abs := filepath.Join(parentAbs, child)
 		info, err := os.Stat(abs)
 		if err != nil || strings.HasPrefix(child, ".") {
 			continue
@@ -146,7 +165,7 @@ func (v *Vault) scanNode(rel, name string, isDir bool) *Node {
 		case isMarkdown(child):
 			doc := &Node{Name: child, Rel: childRel}
 			base := strings.TrimSuffix(child, filepath.Ext(child))
-			if info, err := os.Stat(filepath.Join(v.Root, filepath.FromSlash(rel), base)); err == nil && info.IsDir() {
+			if info, err := os.Stat(filepath.Join(parentAbs, base)); err == nil && info.IsDir() {
 				doc.Children = v.scanNode(path.Join(rel, base), base, true).Children
 			}
 			n.Children = append(n.Children, doc)
@@ -196,6 +215,9 @@ func (v *Vault) WriteDoc(rel, content string) (time.Time, error) {
 // path.
 func (v *Vault) CreateKnowledgeBase(name string) (string, error) {
 	name = v.uniqueName(v.Root, sanitizeName(name), "")
+	for v.External[name] != "" {
+		name = v.uniqueName(v.Root, name+" 2", "")
+	}
 	if err := os.Mkdir(filepath.Join(v.Root, name), 0o755); err != nil {
 		return "", err
 	}
@@ -325,9 +347,15 @@ func (v *Vault) Rename(rel, newName string) (string, error) {
 	newRel := path.Join(parent, newEntry)
 	v.replaceOrder(parent, oldEntry, newEntry)
 	if hasDir && oldBase != newBase {
-		oldDirAbs := filepath.Join(v.Root, filepath.FromSlash(oldDir))
+		oldDirAbs, err := v.abs(oldDir)
+		if err != nil {
+			return "", err
+		}
 		newDirRel := path.Join(parent, newBase)
-		newDirAbs := filepath.Join(v.Root, filepath.FromSlash(newDirRel))
+		newDirAbs, err := v.abs(newDirRel)
+		if err != nil {
+			return "", err
+		}
 		if err := os.Rename(oldDirAbs, newDirAbs); err != nil {
 			_ = os.Rename(newAbs, oldAbs)
 			v.replaceOrder(parent, newEntry, oldEntry)
@@ -388,10 +416,16 @@ func (v *Vault) Move(rel, newParentRel, beforeName string) (string, error) {
 	oldBase := strings.TrimSuffix(oldName, filepath.Ext(oldName))
 	newBase := strings.TrimSuffix(newName, filepath.Ext(newName))
 	newDirRel := path.Join(newParentRel, newBase)
-	newDirAbs := filepath.Join(v.Root, filepath.FromSlash(newDirRel))
+	newDirAbs, err := v.abs(newDirRel)
+	if err != nil {
+		return "", err
+	}
 	oldDirAbs := ""
 	if hasDir {
-		oldDirAbs = filepath.Join(v.Root, filepath.FromSlash(oldDir))
+		oldDirAbs, err = v.abs(oldDir)
+		if err != nil {
+			return "", err
+		}
 	}
 	moveDir := hasDir && filepath.Clean(newDirAbs) != filepath.Clean(oldDirAbs)
 	if moveDir {
@@ -479,7 +513,12 @@ func (v *Vault) Trash(rel string) error {
 		return err
 	}
 	if hasDir {
-		dirAbs := filepath.Join(v.Root, filepath.FromSlash(oldDir))
+		dirAbs, err := v.abs(oldDir)
+		if err != nil {
+			_ = movePath(filepath.Join(entryDir, "data"), abs)
+			os.RemoveAll(entryDir)
+			return err
+		}
 		if err := movePath(dirAbs, filepath.Join(entryDir, "children")); err != nil {
 			_ = movePath(filepath.Join(entryDir, "data"), abs)
 			os.RemoveAll(entryDir)
@@ -527,13 +566,19 @@ func (v *Vault) RestoreTrash(id string) error {
 	if err != nil {
 		return err
 	}
-	dest := filepath.Join(v.Root, filepath.FromSlash(t.OriginalRel))
+	dest, err := v.abs(t.OriginalRel)
+	if err != nil {
+		return err
+	}
 	if _, err := os.Stat(dest); err == nil {
 		return fmt.Errorf("“%s”已存在，无法还原", t.OriginalRel)
 	}
 	childrenDest := ""
 	if t.HasChildren {
-		childrenDest = filepath.Join(v.Root, filepath.FromSlash(strings.TrimSuffix(t.OriginalRel, filepath.Ext(t.OriginalRel))))
+		childrenDest, err = v.abs(strings.TrimSuffix(t.OriginalRel, filepath.Ext(t.OriginalRel)))
+		if err != nil {
+			return err
+		}
 		if _, err := os.Stat(childrenDest); err == nil {
 			return fmt.Errorf("“%s”已存在，无法还原", strings.TrimSuffix(t.OriginalRel, filepath.Ext(t.OriginalRel)))
 		}
@@ -595,9 +640,9 @@ var imageExtensions = map[string]bool{
 	".bmp": true, ".svg": true, ".heic": true, ".tif": true, ".tiff": true,
 }
 
-// assetPath returns the path of the image a document refers to, when it
-// is an image in its knowledge base's .assets.
-func (v *Vault) assetPath(docRel, ref string) (string, bool) {
+// assetFile returns the path of a file a document refers to, when it is
+// in its knowledge base's .assets.
+func (v *Vault) assetFile(docRel, ref string) (string, bool) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" || strings.Contains(ref, "://") || strings.HasPrefix(ref, "data:") {
 		return "", false
@@ -612,19 +657,34 @@ func (v *Vault) assetPath(docRel, ref string) (string, bool) {
 	if kb == "" {
 		return "", false
 	}
+	docAbs, err := v.abs(docRel)
+	if err != nil {
+		return "", false
+	}
 	var p string
 	if filepath.IsAbs(ref) {
 		p = ref
 	} else {
-		p = filepath.Join(v.Root, filepath.FromSlash(path.Dir(docRel)), filepath.FromSlash(ref))
+		p = filepath.Join(filepath.Dir(docAbs), filepath.FromSlash(ref))
 	}
 	p = filepath.Clean(p)
-	assets := filepath.Join(v.Root, kb, ".assets")
+	kbDir, err := v.abs(kb)
+	if err != nil {
+		return "", false
+	}
+	assets := filepath.Join(kbDir, ".assets")
 	rel, err := filepath.Rel(assets, p)
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return "", false
 	}
-	if !imageExtensions[strings.ToLower(filepath.Ext(p))] {
+	return p, true
+}
+
+// assetPath returns the path of the image a document refers to, when it
+// is an image in its knowledge base's .assets.
+func (v *Vault) assetPath(docRel, ref string) (string, bool) {
+	p, ok := v.assetFile(docRel, ref)
+	if !ok || !imageExtensions[strings.ToLower(filepath.Ext(p))] {
 		return "", false
 	}
 	return p, true
@@ -677,9 +737,9 @@ func (v *Vault) trashDocSources(entryDir string, t TrashEntry) []markdownSource 
 	return out
 }
 
-// cleanupTrashImages deletes the images the entry's documents refer to,
-// when no other document still refers to them. It only touches images in
-// a knowledge base's .assets, never other attachments.
+// cleanupTrashImages deletes the pictures and attachments the entry's
+// documents refer to, when no other document still refers to them. It
+// only touches files in a knowledge base's .assets.
 func (v *Vault) cleanupTrashImages(entryDir string, t TrashEntry) error {
 	if t.IsDir && !strings.Contains(t.OriginalRel, "/") {
 		// A knowledge base: its .assets are inside the entry itself.
@@ -692,8 +752,8 @@ func (v *Vault) cleanupTrashImages(entryDir string, t TrashEntry) error {
 			if err != nil {
 				continue
 			}
-			for _, ref := range markdown.ImageRefs(string(b)) {
-				if p, ok := v.assetPath(s.rel, ref); ok {
+			for _, ref := range markdown.Refs(string(b)) {
+				if p, ok := v.assetFile(s.rel, ref); ok {
 					candidates[p] = true
 				}
 			}
@@ -705,37 +765,51 @@ func (v *Vault) cleanupTrashImages(entryDir string, t TrashEntry) error {
 	}
 
 	keep := func(rel string, b []byte) {
-		for _, ref := range markdown.ImageRefs(string(b)) {
-			if p, ok := v.assetPath(rel, ref); ok && candidates[p] {
+		for _, ref := range markdown.Refs(string(b)) {
+			if p, ok := v.assetFile(rel, ref); ok && candidates[p] {
 				delete(candidates, p)
 			}
 		}
 	}
-	// Images the vault's documents still show.
-	_ = filepath.WalkDir(v.Root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if p != v.Root && d.IsDir() {
-			if strings.HasPrefix(d.Name(), ".") {
-				return filepath.SkipDir
+	// Pictures and attachments the vault's documents still show.
+	type liveRoot struct {
+		abs    string
+		prefix string
+	}
+	roots := []liveRoot{{abs: v.Root}}
+	for name, p := range v.External {
+		roots = append(roots, liveRoot{abs: p, prefix: name})
+	}
+	for _, r := range roots {
+		_ = filepath.WalkDir(r.abs, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
 			}
+			if p != r.abs && d.IsDir() {
+				if strings.HasPrefix(d.Name(), ".") {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if d.IsDir() || !isMarkdown(d.Name()) {
+				return nil
+			}
+			rel, err := filepath.Rel(r.abs, p)
+			if err != nil {
+				return nil
+			}
+			rel = filepath.ToSlash(rel)
+			if r.prefix != "" {
+				rel = path.Join(r.prefix, rel)
+			}
+			b, err := os.ReadFile(p)
+			if err != nil {
+				return nil
+			}
+			keep(rel, b)
 			return nil
-		}
-		if d.IsDir() || !isMarkdown(d.Name()) {
-			return nil
-		}
-		rel, err := filepath.Rel(v.Root, p)
-		if err != nil {
-			return nil
-		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return nil
-		}
-		keep(filepath.ToSlash(rel), b)
-		return nil
-	})
+		})
+	}
 	// Images another trash entry still shows, so restoring it keeps them.
 	if entries, err := v.ListTrash(); err == nil {
 		for _, other := range entries {
@@ -793,46 +867,62 @@ func (v *Vault) SearchIn(query string, limit int, scope string) ([]SearchResult,
 	}
 	lq := strings.ToLower(q)
 	var out []SearchResult
-	root := v.Root
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if p != root && d.IsDir() && strings.HasPrefix(d.Name(), ".") {
-			return filepath.SkipDir
-		}
-		if d.IsDir() || !isMarkdown(d.Name()) {
-			return nil
-		}
-		rel, err := filepath.Rel(root, p)
-		if err != nil {
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
-		if scope != "" && !v.inSearchScope(rel, scope) {
-			return nil
-		}
-		title := strings.TrimSuffix(filepath.Base(p), filepath.Ext(p))
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return nil
-		}
-		content := string(b)
-		titleHit := strings.Contains(strings.ToLower(title), lq)
-		idx := strings.Index(strings.ToLower(content), lq)
-		if !titleHit && idx < 0 {
-			return nil
-		}
-		out = append(out, SearchResult{Rel: rel, Title: title, Snippet: snippet(content, idx, q)})
-		if len(out) >= limit {
-			return fs.SkipAll
-		}
-		return nil
-	})
-	if errors.Is(err, fs.SkipAll) {
-		err = nil
+	type searchRoot struct {
+		abs    string
+		prefix string
 	}
-	return out, err
+	roots := []searchRoot{{abs: v.Root}}
+	for name, p := range v.External {
+		roots = append(roots, searchRoot{abs: p, prefix: name})
+	}
+	for _, r := range roots {
+		root := r.abs
+		err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if p != root && d.IsDir() && strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			if d.IsDir() || !isMarkdown(d.Name()) {
+				return nil
+			}
+			rel, err := filepath.Rel(root, p)
+			if err != nil {
+				return nil
+			}
+			rel = filepath.ToSlash(rel)
+			if r.prefix != "" {
+				rel = path.Join(r.prefix, rel)
+			}
+			if scope != "" && !v.inSearchScope(rel, scope) {
+				return nil
+			}
+			title := strings.TrimSuffix(filepath.Base(p), filepath.Ext(p))
+			b, err := os.ReadFile(p)
+			if err != nil {
+				return nil
+			}
+			content := string(b)
+			titleHit := strings.Contains(strings.ToLower(title), lq)
+			idx := strings.Index(strings.ToLower(content), lq)
+			if !titleHit && idx < 0 {
+				return nil
+			}
+			out = append(out, SearchResult{Rel: rel, Title: title, Snippet: snippet(content, idx, q)})
+			if len(out) >= limit {
+				return fs.SkipAll
+			}
+			return nil
+		})
+		if errors.Is(err, fs.SkipAll) {
+			return out, nil
+		}
+		if err != nil {
+			return out, err
+		}
+	}
+	return out, nil
 }
 
 // ImportAsset copies a file into the knowledge base's asset folder and
@@ -852,7 +942,11 @@ func (v *Vault) ImportAssetBytes(docRel, name string, data []byte) (string, erro
 	if kb == "" {
 		return "", errors.New("文档必须位于知识库中")
 	}
-	assetDir := filepath.Join(v.Root, kb, ".assets")
+	kbDir, err := v.abs(kb)
+	if err != nil {
+		return "", err
+	}
+	assetDir := filepath.Join(kbDir, ".assets")
 	if err := os.MkdirAll(assetDir, 0o755); err != nil {
 		return "", err
 	}
@@ -861,7 +955,10 @@ func (v *Vault) ImportAssetBytes(docRel, name string, data []byte) (string, erro
 	if err := writeFileAtomic(dst, data); err != nil {
 		return "", err
 	}
-	docAbs := filepath.Join(v.Root, filepath.FromSlash(docRel))
+	docAbs, err := v.abs(docRel)
+	if err != nil {
+		return "", err
+	}
 	rel, err := filepath.Rel(filepath.Dir(docAbs), dst)
 	if err != nil {
 		return "", err
@@ -874,8 +971,16 @@ func (v *Vault) ResolveAsset(docRel, url string) (string, bool) {
 	if url == "" || strings.Contains(url, "://") || strings.HasPrefix(url, "data:") {
 		return "", false
 	}
-	docAbs := filepath.Join(v.Root, filepath.FromSlash(docRel))
-	p := filepath.Join(filepath.Dir(docAbs), filepath.FromSlash(url))
+	docAbs, err := v.abs(docRel)
+	if err != nil {
+		return "", false
+	}
+	var p string
+	if filepath.IsAbs(url) {
+		p = url
+	} else {
+		p = filepath.Join(filepath.Dir(docAbs), filepath.FromSlash(url))
+	}
 	return p, true
 }
 
@@ -929,7 +1034,95 @@ func (v *Vault) abs(rel string) (string, error) {
 	if clean == "" {
 		return v.Root, nil
 	}
+	top, rest, _ := strings.Cut(clean, "/")
+	if root, ok := v.External[top]; ok {
+		if rest == "" {
+			return root, nil
+		}
+		return filepath.Join(root, filepath.FromSlash(rest)), nil
+	}
 	return filepath.Join(v.Root, filepath.FromSlash(clean)), nil
+}
+
+// IsExternal reports whether rel is in an external knowledge base.
+func (v *Vault) IsExternal(rel string) bool {
+	top, _, _ := strings.Cut(rel, "/")
+	_, ok := v.External[top]
+	return ok
+}
+
+const externalFile = externalFileName
+
+type externalEntry struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+func (v *Vault) loadExternal() {
+	b, err := os.ReadFile(filepath.Join(v.Root, metaDirName, externalFile))
+	if err != nil {
+		return
+	}
+	var entries []externalEntry
+	if json.Unmarshal(b, &entries) != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.Name != "" && e.Path != "" {
+			v.External[e.Name] = e.Path
+		}
+	}
+}
+
+func (v *Vault) saveExternal() error {
+	var entries []externalEntry
+	for name, p := range v.External {
+		entries = append(entries, externalEntry{Name: name, Path: p})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+	b, err := json.MarshalIndent(entries, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(filepath.Join(v.Root, metaDirName, externalFile), b)
+}
+
+// AddExternal adds a knowledge base reading folder where it is, and
+// returns its name.
+func (v *Vault) AddExternal(name, folder string) (string, error) {
+	abs, err := filepath.Abs(folder)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", errors.New("请选择一个文件夹")
+	}
+	if abs == v.Root || strings.HasPrefix(abs, v.Root+string(os.PathSeparator)) {
+		return "", errors.New("该文件夹已在文档目录内，不需要作为外部知识库")
+	}
+	base := sanitizeName(name)
+	if base == "" {
+		base = filepath.Base(abs)
+	}
+	candidate := v.uniqueName(v.Root, base, "")
+	for v.External[candidate] != "" {
+		candidate = v.uniqueName(v.Root, candidate+" 2", "")
+	}
+	v.External[candidate] = abs
+	if err := v.saveExternal(); err != nil {
+		return "", err
+	}
+	return candidate, nil
+}
+
+// RemoveExternal forgets an external knowledge base, leaving its folder.
+func (v *Vault) RemoveExternal(name string) error {
+	delete(v.External, name)
+	return v.saveExternal()
 }
 
 func (v *Vault) isDir(rel string) bool {
@@ -950,9 +1143,13 @@ func (v *Vault) Abs(rel string) (string, error) { return v.abs(rel) }
 // DocDir returns the folder holding a document's children, when it exists.
 func (v *Vault) DocDir(rel string) (string, bool) { return v.docDir(rel) }
 
-// AssetPath returns the path of the image a document refers to, when it is
-// an image in its knowledge base's .assets.
+// AssetPath returns the path of a file a document refers to, when it is in
+// its knowledge base's .assets.
 func (v *Vault) AssetPath(docRel, ref string) (string, bool) { return v.assetPath(docRel, ref) }
+
+// AssetFile returns the path of any file a document refers to, when it is
+// in its knowledge base's .assets.
+func (v *Vault) AssetFile(docRel, ref string) (string, bool) { return v.assetFile(docRel, ref) }
 
 // SanitizeName makes s a name a file can have.
 func SanitizeName(s string) string { return sanitizeName(s) }

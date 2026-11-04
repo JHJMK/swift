@@ -35,6 +35,16 @@ func Run() {
 						a.update()
 					}
 				}},
+				{Label: "复制导入知识库…", Click: func(*mygo.MenuItem, *mygo.Window) {
+					if a.vault != nil {
+						a.askImportKnowledgeBaseCopy()
+					}
+				}},
+				{Label: "引用外部知识库…", Click: func(*mygo.MenuItem, *mygo.Window) {
+					if a.vault != nil {
+						a.askImportExternalKnowledgeBase()
+					}
+				}},
 				{Label: "新建目录", Click: func(*mygo.MenuItem, *mygo.Window) {
 					if a.vault != nil {
 						a.askNewFolder()
@@ -69,6 +79,14 @@ func Run() {
 				mygo.Separator(),
 				{Label: "查找", Accelerator: "CmdOrCtrl+F", Click: func(*mygo.MenuItem, *mygo.Window) {
 					a.openFind()
+				}},
+			}},
+			{Label: "插入", Submenu: []*mygo.MenuItem{
+				{Label: "附件…", Accelerator: "CmdOrCtrl+Shift+A", Click: func(*mygo.MenuItem, *mygo.Window) {
+					a.insertAttachment()
+				}},
+				{Label: "图片…", Click: func(*mygo.MenuItem, *mygo.Window) {
+					a.insertImage()
 				}},
 			}},
 			{Role: mygo.RoleFormatMenu},

@@ -40,6 +40,10 @@ type docState struct {
 	// knowledge base until it is saved to one.
 	Note bool
 
+	// ReadOnly shows a document of an external knowledge base, which the
+	// app reads where it is and does not write.
+	ReadOnly bool
+
 	// mermaidPreviews are the rendered diagrams shown above their source;
 	// they are left out of the Markdown written.
 	mermaidPreviews map[string]bool
@@ -115,6 +119,8 @@ type app struct {
 	kbMenuOpen     bool
 	moreMenuOpen   bool
 	exportMenuOpen bool
+	kbAddMenuOpen  bool
+	importMenuOpen bool
 	// rowMenu is the node whose tree row menu shows, by its path, and
 	// rowPlus the node whose add menu shows.
 	rowMenu string
@@ -310,6 +316,10 @@ func (a *app) flushDoc() {
 	if a.doc == nil || !a.doc.Dirty {
 		return
 	}
+	if a.doc.ReadOnly {
+		a.doc.Dirty = false
+		return
+	}
 	visible := a.doc.Doc.Text().Markdown()
 	if visible == a.doc.Saved && !a.doc.Note {
 		a.doc.Dirty = false
@@ -389,7 +399,7 @@ func (a *app) loadImages(text richtext.Text, docRel string) richtext.Text {
 
 // insertImage asks for a picture and puts it into the open document.
 func (a *app) insertImage() {
-	if a.doc == nil {
+	if a.doc == nil || a.doc.ReadOnly {
 		return
 	}
 	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
@@ -731,7 +741,7 @@ func (a *app) flushTitle() {
 // applyTitleDraft renames the open document to the title typed on its
 // page, and reports whether it did.
 func (a *app) applyTitleDraft() bool {
-	if a.doc == nil || !a.doc.ShowTitle {
+	if a.doc == nil || !a.doc.ShowTitle || a.doc.ReadOnly {
 		return false
 	}
 	title := strings.TrimSpace(a.doc.TitleDraft)
@@ -1046,8 +1056,19 @@ func (a *app) importMarkdownFile(parentRel, srcPath string) error {
 // files relative to srcDir, into the knowledge base's assets, and points
 // the text at them.
 func (a *app) importMarkdownImages(docRel, srcDir, md string) string {
-	return markdown.RewriteImageRefs(md, func(ref string) (string, bool) {
+	copyOne := func(ref string) (string, bool) {
 		return a.importImage(docRel, srcDir, ref)
+	}
+	md = markdown.RewriteImageRefs(md, copyOne)
+	return markdown.RewriteLocalRefs(md, func(ref string, image bool) (string, bool) {
+		if image {
+			return "", false
+		}
+		ext := strings.ToLower(filepath.Ext(ref))
+		if ext == ".md" || ext == ".markdown" {
+			return "", false
+		}
+		return copyOne(ref)
 	})
 }
 
@@ -1227,8 +1248,8 @@ func (a *app) rewriteCopiedDoc(srcRel, dstRel string) {
 	srcKB := strings.Split(srcRel, "/")[0]
 	dstKB := strings.Split(dstRel, "/")[0]
 	dstDir := filepath.Dir(dstAbs)
-	md := markdown.RewriteImageRefs(string(b), func(ref string) (string, bool) {
-		srcAsset, ok := a.vault.AssetPath(srcRel, ref)
+	copyOne := func(ref string) (string, bool) {
+		srcAsset, ok := a.vault.AssetFile(srcRel, ref)
 		if !ok {
 			return "", false
 		}
@@ -1249,6 +1270,17 @@ func (a *app) rewriteCopiedDoc(srcRel, dstRel string) {
 			return "", false
 		}
 		return moved, true
+	}
+	md := markdown.RewriteImageRefs(string(b), copyOne)
+	md = markdown.RewriteLocalRefs(md, func(ref string, image bool) (string, bool) {
+		if image {
+			return "", false
+		}
+		ext := strings.ToLower(filepath.Ext(ref))
+		if ext == ".md" || ext == ".markdown" {
+			return "", false
+		}
+		return copyOne(ref)
 	})
 	if md == string(b) {
 		return
@@ -1386,7 +1418,10 @@ func (a *app) pinDoc(n *Node) {
 // copyNodeLink copies a file link to the node, as 语雀 copies a document's
 // link.
 func (a *app) copyNodeLink(rel string) {
-	p := filepath.Join(a.vault.Root, filepath.FromSlash(rel))
+	p, err := a.vault.Abs(rel)
+	if err != nil {
+		return
+	}
 	u := url.URL{Scheme: "file", Path: p}
 	mygo.Clipboard.WriteText(u.String())
 }
@@ -1593,7 +1628,7 @@ func (a *app) writeMarkdownZip(dst, title string) error {
 	assetsName := title + ".assets"
 	assetsDir := filepath.Join(top, assetsName)
 	used := map[string]bool{}
-	md = markdown.RewriteImageRefs(md, func(ref string) (string, bool) {
+	copyAsset := func(ref string) (string, bool) {
 		if ref == "" || strings.Contains(ref, "://") || strings.HasPrefix(ref, "data:") {
 			return "", false
 		}
@@ -1624,6 +1659,17 @@ func (a *app) writeMarkdownZip(dst, title string) error {
 			return "", false
 		}
 		return assetsName + "/" + name, true
+	}
+	md = markdown.RewriteImageRefs(md, copyAsset)
+	md = markdown.RewriteLocalRefs(md, func(ref string, image bool) (string, bool) {
+		if image {
+			return "", false
+		}
+		ext := strings.ToLower(filepath.Ext(ref))
+		if ext == ".md" || ext == ".markdown" {
+			return "", false
+		}
+		return copyAsset(ref)
 	})
 	if err := os.WriteFile(filepath.Join(top, title+".md"), []byte(md), 0o644); err != nil {
 		return err

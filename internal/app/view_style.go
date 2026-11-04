@@ -59,7 +59,7 @@ func navRow(c *ui.Context, icon *ui.SVG, label string, selected bool, onClick fu
 }
 
 // actionCard is a clickable card of the home page.
-func actionCard(c *ui.Context, icon *ui.SVG, title, subtitle string, onClick func()) {
+func actionCard(c *ui.Context, icon *ui.SVG, title, subtitle string, onClick func()) ui.Element {
 	t := c.Theme()
 	card := ui.Column(c).Grow(1).Padding(16).Gap(4).Radius(10).
 		Background(t.Surface).Border(1, t.Border).OnClick(onClick)
@@ -74,4 +74,5 @@ func actionCard(c *ui.Context, icon *ui.SVG, title, subtitle string, onClick fun
 		ui.Text(c, title).FontSize(15).Bold().Padding(6, 0, 0, 0)
 		ui.Text(c, subtitle).FontSize(13).TextColor(t.TextMuted).SingleLine()
 	})
+	return card
 }

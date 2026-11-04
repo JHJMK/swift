@@ -71,9 +71,15 @@ func (v *Vault) Copy(rel, newParentRel string, deep bool) (string, error) {
 
 	// A document's children live in the folder beside it; copy that too.
 	if oldDirRel, ok := v.docDir(rel); ok {
-		oldDirAbs := filepath.Join(v.Root, filepath.FromSlash(oldDirRel))
+		oldDirAbs, err := v.abs(oldDirRel)
+		if err != nil {
+			return "", err
+		}
 		newDirRel := path.Join(newParentRel, newBase)
-		newDirAbs := filepath.Join(v.Root, filepath.FromSlash(newDirRel))
+		newDirAbs, err := v.abs(newDirRel)
+		if err != nil {
+			return "", err
+		}
 		if err := copyTree(oldDirAbs, newDirAbs); err != nil {
 			os.Remove(newAbs)
 			os.RemoveAll(newDirAbs)

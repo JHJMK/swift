@@ -3,6 +3,6 @@
   "slug": "swift",
   "identifier": "com.jjk.swift",
   "version": "0.1.0",
-  "icon": "resources/swift.png",
+  "icon": "internal/app/icon/swift.png",
   "out": "build"
 }

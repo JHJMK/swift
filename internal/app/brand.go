@@ -3,7 +3,7 @@ package app
 import (
 	"github.com/egoist/mygo/ui"
 
-	"swift/resources"
+	"swift/internal/app/icon"
 )
 
 var brandBitmap *ui.Bitmap
@@ -12,7 +12,7 @@ var brandBitmap *ui.Bitmap
 // or an empty box of that size if the icon cannot be decoded.
 func brandLogo(c *ui.Context, size, radius float32) ui.Element {
 	if brandBitmap == nil {
-		if bmp, err := ui.DecodeBitmap(resources.SwiftPNG); err == nil {
+		if bmp, err := ui.DecodeBitmap(icon.SwiftPNG); err == nil {
 			brandBitmap = bmp
 		}
 	}

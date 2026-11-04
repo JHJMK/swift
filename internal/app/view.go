@@ -1,7 +1,6 @@
 package app
 
 import (
-	"path/filepath"
 	"strings"
 
 	"github.com/egoist/mygo"
@@ -217,17 +216,36 @@ func (a *app) globalSidebar(c *ui.Context) {
 
 		ui.Row(c).Padding(16, 10, 2, 14).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "知识库").FontSize(12).Bold().TextColor(t.TextMuted).Grow(1)
-			add := ui.ButtonBase(c).Label("新建知识库").Tooltip("新建知识库").
+			add := ui.ButtonBase(c).Label("新建或导入知识库").Tooltip("新建或导入知识库").
 				Width(22).Height(22).Radius(6).Justify(ui.Center).AlignItems(ui.Center)
-			if add.Hovered() {
+			if a.kbAddMenuOpen || add.Hovered() {
 				add.Background(ui.Hex(hoverBg))
 			}
 			add.Children(func() {
 				ui.Icon(c, iconPlus).FontSize(15).TextColor(t.TextMuted)
 			})
 			if add.Clicked() {
-				a.askNewKnowledgeBase()
+				a.kbAddMenuOpen = !a.kbAddMenuOpen
+				a.update()
 			}
+			dropdownRight(c, add, &a.kbAddMenuOpen, func() {
+				menuItem(c, iconBook, "新建知识库", func() {
+					a.kbAddMenuOpen = false
+					a.askNewKnowledgeBase()
+					a.update()
+				})
+				menuSeparator(c)
+				menuItem(c, iconDownload, "复制导入知识库", func() {
+					a.kbAddMenuOpen = false
+					a.askImportKnowledgeBaseCopy()
+					a.update()
+				})
+				menuItem(c, iconFolder, "引用外部知识库", func() {
+					a.kbAddMenuOpen = false
+					a.askImportExternalKnowledgeBase()
+					a.update()
+				})
+			})
 		})
 
 		ui.Scroll(c).Grow(1).Children(func() {
@@ -284,6 +302,27 @@ func (a *app) globalSidebar(c *ui.Context) {
 							}
 							open := a.rowMenu == n.Rel
 							dropdownRight(c, more, &open, func() {
+								if a.vault.IsExternal(n.Rel) {
+									menuItem(c, iconDownload, "导出", func() {
+										a.rowMenu = ""
+										a.exportKnowledgeBase(n)
+										a.update()
+									})
+									menuItem(c, iconFolder, "在 Finder 中显示", func() {
+										a.rowMenu = ""
+										if p, err := a.vault.Abs(n.Rel); err == nil {
+											mygo.Shell.ShowItemInFolder(p)
+										}
+										a.update()
+									})
+									menuSeparator(c)
+									menuItemDanger(c, iconTrash, "移除外部知识库", func() {
+										a.rowMenu = ""
+										a.askRemoveExternal(n.Rel)
+										a.update()
+									})
+									return
+								}
 								menuItem(c, iconPencil, "重命名", func() {
 									a.rowMenu = ""
 									a.askRename(n.Rel)
@@ -358,12 +397,14 @@ func (a *app) kbPanel(c *ui.Context, kb *Node) {
 						a.update()
 					})
 				}
-				menuSeparator(c)
-				menuItem(c, iconPencil, "重命名知识库", func() {
-					a.kbMenuOpen = false
-					a.askRename(kb.Rel)
-					a.update()
-				})
+				if !a.vault.IsExternal(kb.Rel) {
+					menuSeparator(c)
+					menuItem(c, iconPencil, "重命名知识库", func() {
+						a.kbMenuOpen = false
+						a.askRename(kb.Rel)
+						a.update()
+					})
+				}
 			})
 		})
 
@@ -577,7 +618,9 @@ type nodeAction struct {
 func (a *app) nodeActions(n *Node) []nodeAction {
 	rel := n.Rel
 	finder := func() {
-		mygo.Shell.ShowItemInFolder(filepath.Join(a.vault.Root, filepath.FromSlash(rel)))
+		if p, err := a.vault.Abs(rel); err == nil {
+			mygo.Shell.ShowItemInFolder(p)
+		}
 	}
 	var acts []nodeAction
 
@@ -655,6 +698,22 @@ func (a *app) homeView(c *ui.Context) {
 					actionCard(c, iconFile, "新建文档", "写一篇 Markdown 文档", a.askNewDocAt)
 					actionCard(c, iconBook, "新建知识库", "用知识库整理内容", a.askNewKnowledgeBase)
 					actionCard(c, iconSearch, "搜索文档", "在标题和正文中查找", a.openSearch)
+					importCard := actionCard(c, iconDownload, "导入知识库", "复制或引用文件夹", func() {
+						a.importMenuOpen = !a.importMenuOpen
+						a.update()
+					})
+					dropdownRight(c, importCard, &a.importMenuOpen, func() {
+						menuItem(c, iconDownload, "复制导入知识库", func() {
+							a.importMenuOpen = false
+							a.askImportKnowledgeBaseCopy()
+							a.update()
+						})
+						menuItem(c, iconFolder, "引用外部知识库", func() {
+							a.importMenuOpen = false
+							a.askImportExternalKnowledgeBase()
+							a.update()
+						})
+					})
 				})
 
 				ui.Text(c, "最近打开").FontSize(16).Bold().Padding(6, 0, 0, 0)
@@ -740,24 +799,38 @@ func (a *app) folderView(c *ui.Context) {
 			if ui.Button(c, "新建目录").Clicked() {
 				a.askNewFolder()
 			}
+			externalKB := a.vault.IsExternal(n.Rel) && !strings.Contains(n.Rel, "/")
 			more := menuButton(c, "更多", &a.moreMenuOpen)
 			dropdown(c, more, &a.moreMenuOpen, func() {
-				menuItem(c, iconPencil, "重命名", func() {
-					a.moreMenuOpen = false
-					a.askRename(n.Rel)
-					a.update()
-				})
+				if !externalKB {
+					menuItem(c, iconPencil, "重命名", func() {
+						a.moreMenuOpen = false
+						a.askRename(n.Rel)
+						a.update()
+					})
+				}
 				menuItem(c, iconFolder, "在 Finder 中显示", func() {
 					a.moreMenuOpen = false
-					mygo.Shell.ShowItemInFolder(filepath.Join(a.vault.Root, filepath.FromSlash(n.Rel)))
+					if p, err := a.vault.Abs(n.Rel); err == nil {
+						mygo.Shell.ShowItemInFolder(p)
+					}
 					a.update()
 				})
-				menuSeparator(c)
-				menuItemDanger(c, iconTrash, "删除", func() {
-					a.moreMenuOpen = false
-					a.askDelete(n.Rel)
-					a.update()
-				})
+				if externalKB {
+					menuSeparator(c)
+					menuItemDanger(c, iconTrash, "移除外部知识库", func() {
+						a.moreMenuOpen = false
+						a.askRemoveExternal(n.Rel)
+						a.update()
+					})
+				} else {
+					menuSeparator(c)
+					menuItemDanger(c, iconTrash, "删除", func() {
+						a.moreMenuOpen = false
+						a.askDelete(n.Rel)
+						a.update()
+					})
+				}
 			})
 		})
 		ui.Scroll(c).Grow(1).Children(func() {

@@ -23,7 +23,10 @@ func TestImportMarkdownWithImages(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(src, "pixel.png"), buf.Bytes(), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	const md = "# 导入\n\n![图片](pixel.png)\n\n![远程](https://example.com/x.png)\n\n<img src=\"pixel.png\">\n"
+	if err := os.WriteFile(filepath.Join(src, "说明.pdf"), []byte("%PDF-1.4"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const md = "# 导入\n\n![图片](pixel.png)\n\n[附件](说明.pdf)\n\n![远程](https://example.com/x.png)\n\n<img src=\"pixel.png\">\n"
 	mdPath := filepath.Join(src, "导入文档.md")
 	if err := os.WriteFile(mdPath, []byte(md), 0o644); err != nil {
 		t.Fatal(err)
@@ -45,12 +48,18 @@ func TestImportMarkdownWithImages(t *testing.T) {
 	if !strings.Contains(saved, "https://example.com/x.png") {
 		t.Fatalf("remote image changed: %q", saved)
 	}
+	if !strings.Contains(saved, "[附件](.assets/") {
+		t.Fatalf("attachment not imported: %q", saved)
+	}
 	assets, err := filepath.Glob(filepath.Join(root, "我的知识库", ".assets", "*-pixel.png"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(assets) != 2 {
 		t.Fatalf("imported assets are %v", assets)
+	}
+	if pdfs, _ := filepath.Glob(filepath.Join(root, "我的知识库", ".assets", "*-说明.pdf")); len(pdfs) != 1 {
+		t.Fatalf("imported attachment is %v", pdfs)
 	}
 }
 

@@ -1,5 +1,5 @@
-// Package resources holds the pictures the app is built with.
-package resources
+// Package icon holds the app's icon, embedded in the binary.
+package icon
 
 import _ "embed"
 

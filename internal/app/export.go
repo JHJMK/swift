@@ -354,7 +354,11 @@ func (a *app) exportKnowledgeBase(n *Node) {
 	if !strings.EqualFold(filepath.Ext(p), ".zip") {
 		p += ".zip"
 	}
-	src := filepath.Join(a.vault.Root, filepath.FromSlash(n.Rel))
+	src, err := a.vault.Abs(n.Rel)
+	if err != nil {
+		a.setError(err)
+		return
+	}
 	if strings.HasPrefix(filepath.Clean(p), filepath.Clean(src)+string(os.PathSeparator)) {
 		a.setError(errors.New("不能把知识库导出到它自己的目录中"))
 		return

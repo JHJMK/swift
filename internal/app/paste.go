@@ -12,7 +12,7 @@ import (
 // item is enabled only while the editor has the focus, so text fields keep
 // the usual Cmd+V.
 func (a *app) pasteFromMenu() {
-	if a.doc == nil {
+	if a.doc == nil || a.doc.ReadOnly {
 		return
 	}
 	defer a.update()
@@ -107,7 +107,7 @@ func (a *app) setEditorFocused(focused bool) {
 // pasteAndMatchStyle pastes only the clipboard's text, in the typing
 // attributes, as Edit > Paste and Match Style does.
 func (a *app) pasteAndMatchStyle() {
-	if a.doc == nil {
+	if a.doc == nil || a.doc.ReadOnly {
 		return
 	}
 	defer a.update()

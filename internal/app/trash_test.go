@@ -108,8 +108,8 @@ func TestPurgeTrashKeepsSharedImages(t *testing.T) {
 	mustNotExist(t, p)
 }
 
-// Only images go: another attachment in .assets survives the purge.
-func TestPurgeTrashKeepsAttachments(t *testing.T) {
+// Attachments a document links to go with it too.
+func TestPurgeTrashDeletesAttachments(t *testing.T) {
 	a, root, rel := newTestApp(t)
 	assets := filepath.Join(root, "我的知识库", ".assets")
 	if err := os.MkdirAll(assets, 0o755); err != nil {
@@ -119,7 +119,7 @@ func TestPurgeTrashKeepsAttachments(t *testing.T) {
 	if err := os.WriteFile(attach, []byte("hi"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.vault.WriteDoc(rel, "![附件](.assets/说明.txt)\n"); err != nil {
+	if _, err := a.vault.WriteDoc(rel, "[附件](.assets/说明.txt)\n"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -130,7 +130,7 @@ func TestPurgeTrashKeepsAttachments(t *testing.T) {
 	if err := a.vault.PurgeTrash(list[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	mustExist(t, attach)
+	mustNotExist(t, attach)
 }
 
 // Purging a document with children deletes the images of both.

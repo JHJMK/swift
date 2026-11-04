@@ -97,3 +97,41 @@ func RewriteImageRefs(md string, rewrite func(ref string) (string, bool)) string
 	})
 	return md
 }
+
+var localRefPattern = regexp.MustCompile(`(!?)\[([^\]]*)\]\(([^)]*)\)`)
+
+// RewriteLocalRefs rewrites the targets of the images and links of md.
+// fn gets each target and whether it is an image, and returns the new
+// target when it should change it.
+func RewriteLocalRefs(md string, fn func(target string, image bool) (string, bool)) string {
+	return localRefPattern.ReplaceAllStringFunc(md, func(m string) string {
+		sub := localRefPattern.FindStringSubmatch(m)
+		if sub == nil {
+			return m
+		}
+		target, title := splitImageTarget(sub[3])
+		moved, ok := fn(target, sub[1] == "!")
+		if !ok {
+			return m
+		}
+		suffix := ""
+		if title != "" {
+			suffix = " " + title
+		}
+		return sub[1] + "[" + sub[2] + "](" + moved + suffix + ")"
+	})
+}
+
+// Refs returns the targets of the images and links of md, as written.
+func Refs(md string) []string {
+	refs := ImageRefs(md)
+	for _, m := range localRefPattern.FindAllStringSubmatch(md, -1) {
+		if m[1] == "!" {
+			continue
+		}
+		if target, _ := splitImageTarget(m[3]); target != "" {
+			refs = append(refs, target)
+		}
+	}
+	return refs
+}

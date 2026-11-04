@@ -22,8 +22,13 @@ func (a *app) editorView(c *ui.Context) {
 				meta := fmt.Sprintf("%d 字 · %s", a.wordCount(), status)
 				if doc.Note {
 					meta = "小记 · " + meta
-				} else if where := strings.ReplaceAll(parentRel(doc.Rel), "/", " / "); where != "" {
-					meta += " · " + where
+				} else {
+					if where := strings.ReplaceAll(parentRel(doc.Rel), "/", " / "); where != "" {
+						meta += " · " + where
+					}
+					if a.vault.IsExternal(doc.Rel) {
+						meta += " · 外部引用"
+					}
 				}
 				ui.Text(c, meta).FontSize(13).TextColor(t.TextMuted).SingleLine()
 			})
@@ -32,31 +37,18 @@ func (a *app) editorView(c *ui.Context) {
 					a.askNoteSaveTo()
 				}
 			} else {
-				if ui.Button(c, "重命名").Padding(5, 11).Clicked() {
-					a.askRename(doc.Rel)
+				if !doc.ReadOnly {
+					if ui.Button(c, "重命名").Padding(5, 11).Clicked() {
+						a.askRename(doc.Rel)
+					}
 				}
-				export := menuButton(c, "导出", &a.exportMenuOpen)
-				dropdown(c, export, &a.exportMenuOpen, func() {
-					menuItem(c, nil, "Markdown（含图片）", func() {
-						a.exportMenuOpen = false
-						a.exportDoc("md")
-						a.update()
-					})
-					menuItem(c, nil, "导出为 PDF", func() {
-						a.exportMenuOpen = false
-						a.exportDoc("pdf")
-						a.update()
-					})
-					menuItem(c, nil, "Word (.docx)", func() {
-						a.exportMenuOpen = false
-						a.exportDoc("docx")
-						a.update()
-					})
-				})
+				a.exportDocumentMenu(c)
 			}
 		})
 		ui.Box(c).Height(1).Background(t.Border)
-		a.toolbar(c, doc)
+		if !doc.ReadOnly {
+			a.toolbar(c, doc)
+		}
 		if a.findOpen {
 			a.findBar(c)
 		}
@@ -71,7 +63,10 @@ func (a *app) editorView(c *ui.Context) {
 			ui.Column(c).WidthPercent(100).MaxWidth(840).Padding(40, 48).Children(func() {
 				// A document created without a title shows 语雀's untitled
 				// page: a large title line above the text.
-				if doc.ShowTitle {
+				if doc.ShowTitle && doc.ReadOnly {
+					ui.Text(c, doc.Title).FontSize(38).Bold().FillWidth()
+					ui.Box(c).Height(20)
+				} else if doc.ShowTitle {
 					title := ui.TextInputBase(c, &doc.TitleDraft).
 						Placeholder("请输入标题").
 						PlaceholderColor(ui.Hex("#c3c7c6")).
@@ -112,8 +107,9 @@ func (a *app) editorView(c *ui.Context) {
 					Placeholder:   bodyPlaceholder(doc),
 					Font:          ui.Font{Size: 16, LineHeight: 1.75},
 					Theme:         theme,
-					ReadOnly:      a.findOpen,
+					ReadOnly:      a.findOpen || doc.ReadOnly,
 					OnLinkCommand: a.askLink,
+					OnLink:        a.openEditorLink,
 					ContextMenu: func(m *ui.Menu) {
 						if m.Item("粘贴").Chosen() {
 							a.pending = func() { a.pasteFromMenu() }
@@ -134,6 +130,7 @@ func (a *app) editorView(c *ui.Context) {
 				}
 				if el.Changed() {
 					a.markDocDirty()
+					a.maybeSlashAttachment()
 				}
 				a.setEditorFocused(el.Focused())
 			})
@@ -219,6 +216,9 @@ func (a *app) toolbar(c *ui.Context, doc *docState) {
 		if ui.Button(c, "图片").KeepFocus().Tooltip("插入图片（也可直接 ⌘V 粘贴）").Clicked() {
 			a.insertImage()
 		}
+		if ui.Button(c, "附件").KeepFocus().Tooltip("插入附件（也可输入 /附件）").Clicked() {
+			a.insertAttachment()
+		}
 	})
 }
 
@@ -283,6 +283,28 @@ func (a *app) mermaidHint(c *ui.Context) {
 					a.update()
 				}
 			})
+		})
+	})
+}
+
+// exportDocumentMenu is the page's export menu.
+func (a *app) exportDocumentMenu(c *ui.Context) {
+	export := menuButton(c, "导出", &a.exportMenuOpen)
+	dropdown(c, export, &a.exportMenuOpen, func() {
+		menuItem(c, nil, "Markdown（含图片）", func() {
+			a.exportMenuOpen = false
+			a.exportDoc("md")
+			a.update()
+		})
+		menuItem(c, nil, "导出为 PDF", func() {
+			a.exportMenuOpen = false
+			a.exportDoc("pdf")
+			a.update()
+		})
+		menuItem(c, nil, "Word (.docx)", func() {
+			a.exportMenuOpen = false
+			a.exportDoc("docx")
+			a.update()
 		})
 	})
 }

@@ -712,7 +712,10 @@ func TestExportMarkdownZip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.vault.WriteDoc(rel, "# 图\n\n![图]("+asset+")\n\n```mermaid\ngraph TD\n  A --> B\n```\n"); err != nil {
+	if err := os.WriteFile(filepath.Join(a.vault.Root, "我的知识库", ".assets", "手册.pdf"), []byte("%PDF-1.4"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.vault.WriteDoc(rel, "# 图\n\n![图]("+asset+")\n\n[附件](.assets/手册.pdf)\n\n```mermaid\ngraph TD\n  A --> B\n```\n"); err != nil {
 		t.Fatal(err)
 	}
 	a.openDoc(rel)
@@ -750,6 +753,12 @@ func TestExportMarkdownZip(t *testing.T) {
 	}
 	if !strings.Contains(md, "```mermaid") {
 		t.Fatalf("Markdown lost the Mermaid source: %q", md)
+	}
+	if !strings.Contains(md, "[附件](开始.assets/手册.pdf)") {
+		t.Fatalf("Markdown lost the attachment link: %q", md)
+	}
+	if !names["开始/开始.assets/手册.pdf"] {
+		t.Fatalf("zip lacks the attachment: %v", names)
 	}
 	if strings.Contains(md, "Mermaid 图表") {
 		t.Fatalf("Markdown kept the Mermaid preview: %q", md)

@@ -15,7 +15,11 @@ func TestPasteRewritesImages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.vault.WriteDoc(rel, "# 标题\n\n![图]("+asset+")\n"); err != nil {
+	attach := filepath.Join(root, "我的知识库", ".assets", "说明书.pdf")
+	if err := os.WriteFile(attach, []byte("%PDF-1.4"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.vault.WriteDoc(rel, "# 标题\n\n![图]("+asset+")\n\n[附件](.assets/说明书.pdf)\n"); err != nil {
 		t.Fatal(err)
 	}
 	archive, err := a.vault.CreateFolder("我的知识库", "归档")
@@ -34,6 +38,9 @@ func TestPasteRewritesImages(t *testing.T) {
 	if !strings.Contains(content, "../.assets/") {
 		t.Fatalf("copy does not point back at the assets: %q", content)
 	}
+	if !strings.Contains(content, "[附件](../.assets/说明书.pdf)") {
+		t.Fatalf("copy does not keep the attachment: %q", content)
+	}
 	mustExist(t, assetAbs(t, root, rel, asset))
 
 	// Across knowledge bases the image is copied into the destination.
@@ -50,7 +57,7 @@ func TestPasteRewritesImages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(content2, ".assets/") {
+	if !strings.Contains(content2, ".assets/") || !strings.Contains(content2, "[附件](.assets/") {
 		t.Fatalf("cross knowledge base copy has no asset reference: %q", content2)
 	}
 	assets, err := filepath.Glob(filepath.Join(root, "另一个", ".assets", "*-图.png"))
