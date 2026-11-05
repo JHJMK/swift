@@ -175,6 +175,7 @@ type app struct {
 	syncJob          *syncJob
 	syncNote         syncNote
 	syncResult       *syncResultState
+	showSyncSecret   bool
 	syncRetryPending bool
 	quitting         bool
 }

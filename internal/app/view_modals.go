@@ -104,7 +104,7 @@ func (a *app) settingsModal(c *ui.Context) {
 			if scrollHeight > 520 {
 				scrollHeight = 520
 			}
-			ui.Scroll(c).MaxHeight(scrollHeight).Children(func() {
+			ui.Scroll(c).MaxHeight(scrollHeight).Scrollbars(false).Children(func() {
 				ui.Column(c).Gap(16).Children(func() {
 					ui.Column(c).Gap(6).Children(func() {
 						ui.Text(c, "文档目录").FontSize(13).Bold()
@@ -178,6 +178,7 @@ func (a *app) settingsModal(c *ui.Context) {
 	})
 	if !open {
 		a.settingsOpen = false
+		a.showSyncSecret = false
 	}
 }
 

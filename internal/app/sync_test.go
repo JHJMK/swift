@@ -492,3 +492,37 @@ func TestManualSyncSettingsAndQuit(t *testing.T) {
 		t.Fatalf("closing the app synced in manual mode: %v", err)
 	}
 }
+
+// The settings' scrolling still works with its scroll bar indicator
+// turned off.
+func TestSettingsScrollsWithoutScrollbar(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	a.cfg.Sync = remote.Settings{
+		Enabled:   true,
+		Provider:  remote.ProviderS3,
+		Bucket:    "notes",
+		AccessKey: "key",
+		SecretKey: "secret",
+		Manual:    true,
+	}
+	tt := ui.NewTester(a.view, 1180, 760)
+	if err := tt.Click("设置"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	before, ok := tt.Find("Session Token（可选）")
+	if !ok {
+		t.Fatal("the secret token field is not in the settings")
+	}
+	tt.Scroll(600, 300, 0, 200)
+	tt.Frame()
+	after, ok := tt.Find("Session Token（可选）")
+	if !ok {
+		t.Fatal("the secret token field went away")
+	}
+	if after.Y >= before.Y {
+		t.Fatalf("the settings did not scroll: %v -> %v", before, after)
+	}
+	a.settingsOpen = false
+	tt.Frame()
+}

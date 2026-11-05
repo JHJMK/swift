@@ -101,23 +101,46 @@ func (a *app) s3SyncFields(c *ui.Context) {
 			a.syncInput(c, "服务地址", "留空使用 Amazon S3；自建存储填 https://minio.example.com", &s.Endpoint, false)
 		})
 		ui.Row(c).Gap(12).Children(func() {
-			ui.Column(c).Grow(1).Gap(3).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
 				a.syncInput(c, "区域", "us-east-1", &s.Region, false)
 			})
-			ui.Column(c).Grow(2).Gap(3).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
 				a.syncInput(c, "存储桶", "my-notes", &s.Bucket, false)
 			})
-		})
-		ui.Row(c).Gap(12).Children(func() {
-			ui.Column(c).Grow(2).Gap(3).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
 				a.syncInput(c, "前缀", "可选，例如 notes", &s.Prefix, false)
-			})
-			ui.Column(c).Grow(1).Gap(3).Children(func() {
-				a.syncInput(c, "Access Key", "访问密钥 ID", &s.AccessKey, false)
 			})
 		})
 		ui.Column(c).Gap(3).Children(func() {
-			a.syncInput(c, "Secret Key", "访问密钥", &s.SecretKey, true)
+			a.syncInput(c, "Access Key", "访问密钥 ID", &s.AccessKey, false)
+		})
+		ui.Column(c).Gap(3).Children(func() {
+			ui.Text(c, "Secret Key").FontSize(12).TextColor(t.TextMuted)
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				input := ui.TextInput(c, &s.SecretKey).Label("Secret Key").
+					Placeholder("访问密钥").Grow(1)
+				if !a.showSyncSecret {
+					input = input.Password()
+				}
+				tip := "显示 Secret Key"
+				icon := iconEye
+				if a.showSyncSecret {
+					tip = "隐藏 Secret Key"
+					icon = iconEyeOff
+				}
+				eye := ui.ButtonBase(c).Label(tip).Tooltip(tip).
+					Width(30).Height(30).Radius(6).Justify(ui.Center).AlignItems(ui.Center)
+				if eye.Hovered() {
+					eye.Background(ui.Hex(hoverBg))
+				}
+				eye.Children(func() {
+					ui.Icon(c, icon).FontSize(16).TextColor(t.TextMuted)
+				})
+				if eye.Clicked() {
+					a.showSyncSecret = !a.showSyncSecret
+					a.update()
+				}
+			})
 		})
 		ui.Column(c).Gap(3).Children(func() {
 			a.syncInput(c, "Session Token（可选）", "临时凭证的会话令牌", &s.SessionToken, true)
