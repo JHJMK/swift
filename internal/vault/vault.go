@@ -20,11 +20,12 @@ import (
 )
 
 const (
-	metaDirName      = ".swift"
-	externalFileName = "external.json"
-	orderFileName    = "order.json"
-	recentFileName   = "recent.json"
-	trashDirName     = "trash"
+	metaDirName       = ".swift"
+	noteAssetsDirName = "note-assets"
+	externalFileName  = "external.json"
+	orderFileName     = "order.json"
+	recentFileName    = "recent.json"
+	trashDirName      = "trash"
 )
 
 // Node is a knowledge base, folder or document in the vault.
@@ -966,20 +967,79 @@ func (v *Vault) ImportAssetBytes(docRel, name string, data []byte) (string, erro
 	return filepath.ToSlash(rel), nil
 }
 
+// ImportNoteAssetBytes copies data into the quick note's own asset folder,
+// which lives outside every knowledge base, and returns the link to use in
+// the note.
+func (v *Vault) ImportNoteAssetBytes(name string, data []byte) (string, error) {
+	dir := filepath.Join(v.Root, metaDirName, noteAssetsDirName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	name = strings.ReplaceAll(name, " ", "-")
+	name = fmt.Sprintf("%d-%s", time.Now().UnixNano(), sanitizeName(name))
+	if err := writeFileAtomic(filepath.Join(dir, name), data); err != nil {
+		return "", err
+	}
+	return filepath.ToSlash(filepath.Join(metaDirName, noteAssetsDirName, name)), nil
+}
+
+// MoveNoteAssets copies the note files still referred to by md into the
+// document's knowledge base, and rewrites their links.
+func (v *Vault) MoveNoteAssets(docRel, md string) (string, error) {
+	dir := filepath.Join(v.Root, metaDirName, noteAssetsDirName)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return md, nil
+		}
+		return md, err
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		ref := filepath.ToSlash(filepath.Join(metaDirName, noteAssetsDirName, e.Name()))
+		if !strings.Contains(md, ref) {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			return md, err
+		}
+		moved, err := v.ImportAssetBytes(docRel, e.Name(), data)
+		if err != nil {
+			return md, err
+		}
+		md = strings.ReplaceAll(md, ref, moved)
+	}
+	return md, nil
+}
+
+// RemoveNoteAssets forgets the quick note's asset folder.
+func (v *Vault) RemoveNoteAssets() {
+	_ = os.RemoveAll(filepath.Join(v.Root, metaDirName, noteAssetsDirName))
+}
+
 // ResolveAsset turns a Markdown asset URL into a local path.
 func (v *Vault) ResolveAsset(docRel, url string) (string, bool) {
 	if url == "" || strings.Contains(url, "://") || strings.HasPrefix(url, "data:") {
 		return "", false
 	}
-	docAbs, err := v.abs(docRel)
-	if err != nil {
-		return "", false
+	var base string
+	if docRel == "" {
+		base = v.Root
+	} else {
+		docAbs, err := v.abs(docRel)
+		if err != nil {
+			return "", false
+		}
+		base = filepath.Dir(docAbs)
 	}
 	var p string
 	if filepath.IsAbs(url) {
 		p = url
 	} else {
-		p = filepath.Join(filepath.Dir(docAbs), filepath.FromSlash(url))
+		p = filepath.Join(base, filepath.FromSlash(url))
 	}
 	return p, true
 }

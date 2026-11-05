@@ -165,6 +165,9 @@ type ParagraphStyle struct {
 	// the monospaced font, its spaces kept.
 	Quote     bool `json:"quote,omitempty"`
 	CodeBlock bool `json:"codeBlock,omitempty"`
+	// CodeBlockID groups the paragraphs of one block of code. Adjacent
+	// blocks have different IDs even when no paragraph separates them.
+	CodeBlockID int `json:"codeBlockId,omitempty"`
 	// Language is a fenced code block's info string, as Markdown keeps it:
 	// "go", "mermaid" and the like.
 	Language string `json:"language,omitempty"`
@@ -213,6 +216,12 @@ type attrRun struct {
 // its identity as the text changes around it, for layouts and, one day,
 // collaboration.
 var paraIDs atomic.Uint64
+
+// codeBlockIDs numbers the separate blocks of code, so that two blocks that
+// touch, with no body paragraph between them, stay two blocks.
+var codeBlockIDs atomic.Uint64
+
+func newCodeBlockID() int { return int(codeBlockIDs.Add(1)) }
 
 func newPara(style ParagraphStyle, runs []attrRun) richPara {
 	p := richPara{id: paraIDs.Add(1), style: style.normalized(), runs: runs}

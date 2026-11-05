@@ -10,6 +10,15 @@ import (
 // can be moved.
 type Config struct {
 	Workspace string `json:"workspace"`
+	// PageSettings are the display settings of documents, by rel.
+	PageSettings map[string]PageSettings `json:"pageSettings,omitempty"`
+}
+
+// PageSettings are a document page's display settings. They do not
+// change its Markdown.
+type PageSettings struct {
+	LineHeight float32 `json:"lineHeight,omitempty"`
+	FontSize   float32 `json:"fontSize,omitempty"`
 }
 
 func configPath() (string, error) {

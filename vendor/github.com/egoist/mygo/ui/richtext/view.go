@@ -43,6 +43,14 @@ type EditorOptions struct {
 	// quotations. What it leaves zero, and all of it when nil, takes the
 	// window theme's DefaultTheme.
 	Theme *Theme
+	// OnCaret reports where the caret is, in window coordinates, as the
+	// editor paints, so the app can place a menu beside it.
+	OnCaret func(x, y float32)
+	// OnCopyCode copies a block of code when its copy control is clicked.
+	OnCopyCode func(code string)
+	// OnTop runs when Up is pressed at the very start of the text, so the
+	// app can move the focus above the editor.
+	OnTop func()
 	// ContextMenu, when set, builds the editor's context menu in the
 	// app's look, in place of the editing commands' system menu.
 	ContextMenu func(m *ui.Menu)
@@ -151,6 +159,13 @@ type view struct {
 	// placed is room for the boxes of the paragraphs painted, which moved
 	// compares with those the app read.
 	placed []ParagraphBox
+	// copyButtons are the code blocks' copy controls from the last paint.
+	copyButtons []codeCopyButton
+}
+
+type codeCopyButton struct {
+	rect ui.Rect
+	code string
 }
 
 type editMode uint8
@@ -468,6 +483,30 @@ func (v *view) firstLine(p int, st ParagraphStyle) float32 {
 	return v.look.size * v.look.FirstLineIndent
 }
 
+// codeBlockGap sets two touching blocks of code apart.
+func (v *view) codeBlockGap() float32 { return v.look.size * 0.55 }
+
+// sameCodeGroup reports whether paragraphs a and b are lines of one block
+// of code.
+func (v *view) sameCodeGroup(a, b int) bool {
+	if a < 0 || b < 0 || a >= len(v.paras) || b >= len(v.paras) {
+		return false
+	}
+	sa, sb := v.para(a).style, v.para(b).style
+	return sa.CodeBlock && sb.CodeBlock && sa.CodeBlockID == sb.CodeBlockID
+}
+
+// codeBlockFirst returns the first paragraph of the code block id.
+func (v *view) codeBlockFirst(id int) int {
+	for i := 0; i < len(v.paras); i++ {
+		st := v.para(i).style
+		if st.CodeBlock && st.CodeBlockID == id {
+			return i
+		}
+	}
+	return -1
+}
+
 // space returns the room above and below paragraph p: a heading's
 // margins, a block of code's padding at its ends, the spacing between
 // body paragraphs, above the second.
@@ -485,10 +524,13 @@ func (v *view) space(p int, st ParagraphStyle) (above, below float32) {
 		}
 		below = look.size * h.Bottom
 	case st.CodeBlock:
-		if p == 0 || !v.para(p-1).style.CodeBlock {
+		if p == 0 || !v.sameCodeGroup(p-1, p) {
 			above = look.size * look.CodeBlockPadding[1]
+			if p > 0 && v.para(p-1).style.CodeBlock {
+				above += v.codeBlockGap()
+			}
 		}
-		if p+1 >= len(v.paras) || !v.para(p+1).style.CodeBlock {
+		if p+1 >= len(v.paras) || !v.sameCodeGroup(p, p+1) {
 			below = look.size * look.CodeBlockPadding[1]
 		}
 	}
@@ -618,6 +660,9 @@ func (v *view) paraLayout(p int) *paraView {
 	}
 	if compose != "" {
 		spans = append(spans, v.look.span(compose, typing, para.style))
+	}
+	if para.style.CodeBlock && para.style.Language != "" {
+		spans = syntaxSpans(spans, para.style.Language)
 	}
 	// The indent is on the side the paragraph starts at, the right of one
 	// reading right to left.

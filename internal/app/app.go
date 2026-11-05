@@ -36,6 +36,10 @@ type docState struct {
 	ShowTitle    bool
 	titleFocused bool
 
+	// PageLineHeight and PageFontSize are the page's display settings.
+	PageLineHeight float32
+	PageFontSize   float32
+
 	// Note tells that the page is the quick note, which belongs to no
 	// knowledge base until it is saved to one.
 	Note bool
@@ -105,9 +109,10 @@ type app struct {
 	prompt  *promptState
 	confirm *confirmState
 
-	settingsOpen bool
-	trashOpen    bool
-	trash        []TrashEntry
+	settingsOpen     bool
+	pageSettingsOpen bool
+	trashOpen        bool
+	trash            []TrashEntry
 
 	searchOpen    bool
 	searchQuery   string
@@ -118,9 +123,16 @@ type app struct {
 	// the folder's More and the editor's Export.
 	kbMenuOpen     bool
 	moreMenuOpen   bool
-	exportMenuOpen bool
 	kbAddMenuOpen  bool
 	importMenuOpen bool
+	outlineOpen    bool
+	insertMenuOpen bool
+	insertSlash    bool
+	insertQuery    string
+	caretX, caretY float32
+	insertFocus    bool
+	blockMenuOpen  bool
+	docMoreOpen    bool
 	// rowMenu is the node whose tree row menu shows, by its path, and
 	// rowPlus the node whose add menu shows.
 	rowMenu string
@@ -147,7 +159,11 @@ type app struct {
 
 	// focusBody puts the caret at the start of the text after a title is
 	// entered.
-	focusBody bool
+	focusBody  bool
+	focusTitle bool
+	toast      string
+	toastUntil time.Time
+	narrowMode bool
 
 	pending   func()
 	deferred  func()
@@ -270,6 +286,7 @@ func (a *app) openDoc(rel string) {
 		MTime:           mtime,
 		mermaidPreviews: previews,
 	}
+	a.loadPageSettings(a.doc)
 	// Every page shows its title above the text, editable in place.
 	a.doc.ShowTitle = true
 	a.doc.TitleDraft = a.doc.Title
@@ -422,7 +439,12 @@ func (a *app) insertImage() {
 			a.setError(err)
 			continue
 		}
-		url, err := a.vault.ImportAsset(a.doc.Rel, filename)
+		var url string
+		if a.doc.Note {
+			url, err = a.vault.ImportNoteAssetBytes(filepath.Base(filename), b)
+		} else {
+			url, err = a.vault.ImportAsset(a.doc.Rel, filename)
+		}
 		if err != nil {
 			a.setError(err)
 			continue
@@ -647,7 +669,7 @@ func (a *app) openNote() {
 	if title == "" {
 		title = "小记"
 	}
-	text := richtext.ParseMarkdown(body)
+	text := a.loadImages(richtext.ParseMarkdown(body), "")
 	if strings.TrimSpace(body) == "" {
 		text = richtext.NewText("")
 	}
@@ -658,6 +680,7 @@ func (a *app) openNote() {
 		Saved: body,
 		MTime: time.Now(),
 	}
+	a.loadPageSettings(a.doc)
 	a.doc.ShowTitle = true
 	a.doc.TitleDraft = title
 	a.selected = ""
@@ -710,6 +733,10 @@ func (a *app) saveNoteTo(rel string) error {
 	if err != nil {
 		return err
 	}
+	md, err = a.vault.MoveNoteAssets(docRel, md)
+	if err != nil {
+		return err
+	}
 	if _, err := a.vault.WriteDoc(docRel, md); err != nil {
 		return err
 	}
@@ -718,6 +745,7 @@ func (a *app) saveNoteTo(rel string) error {
 	if err := a.vault.ClearNote(); err != nil {
 		return err
 	}
+	a.vault.RemoveNoteAssets()
 	a.refreshTree()
 	a.openDoc(docRel)
 	return nil

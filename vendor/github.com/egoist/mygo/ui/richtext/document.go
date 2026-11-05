@@ -20,12 +20,13 @@ import (
 // typed text gets and the next move of the caret forgets, as ⌘B does in
 // NSTextView.
 type Document struct {
-	mu      sync.Mutex
-	text    Text
-	anchor  int
-	caret   int
-	typing  *Attributes // nil: derived from the text at the caret
-	version uint64
+	mu         sync.Mutex
+	text       Text
+	anchor     int
+	caret      int
+	blockFocus int         // code block ID whose outer edge has the focus
+	typing     *Attributes // nil: derived from the text at the caret
+	version    uint64
 	// selVersion counts changes of the selection made by the document's
 	// methods, which the editor then takes.
 	selVersion uint64
@@ -114,6 +115,7 @@ func (d *Document) Selection() (anchor, caret int) {
 func (d *Document) SetSelection(anchor, caret int) {
 	d.lock()
 	defer d.mu.Unlock()
+	d.blockFocus = 0
 	d.setSelection(anchor, caret)
 }
 
@@ -496,4 +498,11 @@ func (d *Document) BreakUndoCoalescing() {
 	d.lock()
 	defer d.mu.Unlock()
 	d.coalesce = false
+}
+
+// CodeBlockFocus returns the code block whose outer edge has the focus.
+func (d *Document) CodeBlockFocus() int {
+	d.lock()
+	defer d.mu.Unlock()
+	return d.blockFocus
 }

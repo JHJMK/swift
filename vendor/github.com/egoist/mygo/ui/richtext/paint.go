@@ -2,6 +2,7 @@ package richtext
 
 import (
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -12,6 +13,7 @@ import (
 // composition, the caret and the scroll bar.
 func (v *view) paint(p *ui.Painter, r ui.Rect) {
 	v.rect = r
+	v.copyButtons = v.copyButtons[:0]
 	w, h := max(r.W-2*v.padX, 1), max(r.H-2*v.padY, 1)
 	v.layout(w, h)
 	ox, oy := r.X+v.padX, r.Y+v.padY
@@ -54,7 +56,11 @@ func (v *view) paint(p *ui.Painter, r ui.Rect) {
 			}
 		}
 	}
-	if focused && !v.opts.ReadOnly && a == z {
+	if v.opts.OnCaret != nil {
+		cx, cy, _ := v.caretAt(v.caret, v.composeCaret, v.affinity)
+		v.opts.OnCaret(ox+cx, oy+float32(cy-v.scroll))
+	}
+	if focused && !v.opts.ReadOnly && a == z && v.doc.blockFocus == 0 {
 		const blink = 530 * time.Millisecond
 		if phase := p.Now().Sub(v.blinkStart); (phase/blink)%2 == 0 || phase < 0 {
 			cx, cy, ch := v.caretAt(v.caret, v.composeCaret, v.affinity)
@@ -72,6 +78,33 @@ func (v *view) paint(p *ui.Painter, r ui.Rect) {
 	v.moved()
 }
 
+var codeCopyIcon = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`))
+
+// paintCodeCopy paints the copy control at a block's top right and keeps
+// its hit box and code for the next click.
+func (v *view) paintCodeCopy(p *ui.Painter, i int, box ui.Rect) {
+	if box.W < 50 {
+		return
+	}
+	r := ui.Rect{X: box.X + box.W - 26, Y: box.Y + 4, W: 20, H: 20}
+	p.Fill(r, v.look.CodeBackground, 5)
+	p.Icon(codeCopyIcon, ui.Rect{X: r.X + 4, Y: r.Y + 4, W: 12, H: 12}, v.look.Muted)
+	p0 := i
+	for p0 > 0 && v.sameCodeGroup(p0-1, i) {
+		p0--
+	}
+	p1 := i
+	for p1+1 < len(v.paras) && v.sameCodeGroup(p1, p1+1) {
+		p1++
+	}
+	lines := make([]string, 0, p1-p0+1)
+	for j := p0; j <= p1; j++ {
+		lines = append(lines, v.lineOf(j))
+	}
+	local := ui.Rect{X: r.X - v.rect.X, Y: r.Y - v.rect.Y, W: r.W, H: r.H}
+	v.copyButtons = append(v.copyButtons, codeCopyButton{rect: local, code: strings.Join(lines, "\n")})
+}
+
 // paintBlock paints what a paragraph of style st shows behind its text:
 // the background of a block of code, the bar of a quotation.
 func (v *view) paintBlock(p *ui.Painter, i int, st ParagraphStyle, x, top, height, width float32) {
@@ -79,11 +112,15 @@ func (v *view) paintBlock(p *ui.Painter, i int, st ParagraphStyle, x, top, heigh
 	indent := float32(st.Indent) * look.indent
 	if st.CodeBlock {
 		// One block for the paragraphs of code next to each other, rounded
-		// at its ends.
+		// at its ends, with a header above the first.
 		radius := look.size * look.CodeBlockRadius
-		box := ui.Rect{X: x + indent, Y: top, W: width - indent, H: height}
-		first := i == 0 || !v.para(i-1).style.CodeBlock
-		last := i+1 >= len(v.paras) || !v.para(i+1).style.CodeBlock
+		first := i == 0 || !v.sameCodeGroup(i-1, i)
+		last := i+1 >= len(v.paras) || !v.sameCodeGroup(i, i+1)
+		y := top
+		if first && i > 0 && v.para(i-1).style.CodeBlock {
+			y += v.codeBlockGap()
+		}
+		box := ui.Rect{X: x + indent, Y: y, W: width - indent, H: height - (y - top)}
 		fill := box
 		if !first {
 			fill.Y, fill.H = fill.Y-2*radius, fill.H+2*radius
@@ -92,6 +129,14 @@ func (v *view) paintBlock(p *ui.Painter, i int, st ParagraphStyle, x, top, heigh
 			fill.H += 2 * radius
 		}
 		p.Clip(box, 0, func() { p.Fill(fill, look.CodeBlockBackground, radius) })
+		if first {
+			v.paintCodeCopy(p, i, box)
+		}
+		if v.doc.blockFocus != 0 && v.doc.blockFocus == st.CodeBlockID && first {
+			// The caret at the block's outside left, as the block editor
+			// selects a card before its first line.
+			p.Fill(ui.Rect{X: box.X - 6, Y: box.Y + 6, W: 2, H: look.size}, look.Caret, 0)
+		}
 	}
 	if st.Quote {
 		if i == 0 || !v.para(i-1).style.Quote {

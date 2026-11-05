@@ -57,10 +57,9 @@ func TestUIViewOpensDocument(t *testing.T) {
 		t.Fatalf("editor not shown: %q", tt.Texts())
 	}
 
-	// The toolbar edits the open document.
-	if err := tt.Click("重命名"); err != nil {
-		t.Fatal(err)
-	}
+	// The page actions rename the open document.
+	a.askRename(a.doc.Rel)
+	tt.Frame()
 	if a.prompt == nil || a.prompt.Title != "重命名" {
 		t.Fatalf("rename prompt not shown: %+v", a.prompt)
 	}
@@ -296,9 +295,8 @@ func TestRenameUntitledDocument(t *testing.T) {
 	tt := ui.NewTester(a.view, 1180, 760)
 
 	createDocFromWorkbench(t, tt)
-	if err := tt.Click("重命名"); err != nil {
-		t.Fatal(err)
-	}
+	a.askRename(a.doc.Rel)
+	tt.Frame()
 	if a.prompt == nil {
 		t.Fatal("rename prompt not shown")
 	}

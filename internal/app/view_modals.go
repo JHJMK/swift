@@ -411,3 +411,56 @@ func (a *app) pickerModal(c *ui.Context) {
 		a.picker = nil
 	}
 }
+
+// pageSettingsModal sets the document page's line spacing and default
+// font size. These are display settings; the Markdown is not rewritten.
+func (a *app) pageSettingsModal(c *ui.Context) {
+	if !a.pageSettingsOpen || a.doc == nil || a.doc.Note {
+		return
+	}
+	doc := a.doc
+	t := c.Theme()
+	open := true
+	choice := func(label string, selected bool, run func()) {
+		b := ui.Button(c, label).Padding(4, 12)
+		if selected {
+			b = b.Background(t.Accent.Alpha(0.12)).TextColor(t.Accent)
+		}
+		if b.Clicked() {
+			run()
+			a.savePageSettings(doc)
+			a.update()
+		}
+	}
+	ui.Modal(c, &open, func() {
+		ui.Column(c).Width(440).Padding(22).Gap(14).Children(func() {
+			ui.Text(c, "页面设置").FontSize(18).Bold()
+			ui.Text(c, "只影响页面显示，不改写正文。").FontSize(12).TextColor(t.TextMuted)
+
+			ui.Text(c, "行间距").FontSize(13).Bold()
+			ui.Row(c).Gap(6).Children(func() {
+				choice("紧凑", doc.PageLineHeight == 1.5, func() { doc.PageLineHeight = 1.5 })
+				choice("标准", doc.PageLineHeight == 1.75, func() { doc.PageLineHeight = 1.75 })
+				choice("宽松", doc.PageLineHeight == 2, func() { doc.PageLineHeight = 2 })
+			})
+
+			ui.Text(c, "默认字体大小").FontSize(13).Bold()
+			ui.Row(c).Gap(6).Children(func() {
+				for _, size := range []float32{14, 15, 16, 18, 20} {
+					size := size
+					choice(fmt.Sprintf("%.0f", size), doc.PageFontSize == size, func() { doc.PageFontSize = size })
+				}
+			})
+			ui.Text(c, "已经写好的内容不会改写；字号作为页面的默认显示大小。").FontSize(12).TextColor(t.TextMuted)
+
+			ui.Row(c).Justify(ui.End).Children(func() {
+				if ui.PrimaryButton(c, "完成").Clicked() {
+					open = false
+				}
+			})
+		})
+	})
+	if !open {
+		a.pageSettingsOpen = false
+	}
+}

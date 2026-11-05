@@ -165,6 +165,131 @@ func (v *view) visual(dir int) (int, ui.TextAffinity) {
 	return v.global(p, pv.runeOfUnit(next.Index)), next.Affinity
 }
 
+// leaveBlockFocus moves up out of a focused code block's outer edge.
+func (v *view) leaveBlockFocus() {
+	first := v.codeBlockFirst(v.doc.blockFocus)
+	v.doc.blockFocus = 0
+	if first > 0 {
+		p := first - 1
+		v.moveTo(v.shown.paraStart(p)+v.para(p).n, ui.TextUpstream, false)
+		v.reveal = true
+	}
+}
+
+// enterBlockFocus returns from a code block's outer edge into its code.
+func (v *view) enterBlockFocus() {
+	first := v.codeBlockFirst(v.doc.blockFocus)
+	v.doc.blockFocus = 0
+	if first >= 0 {
+		v.moveTo(v.shown.paraStart(first), ui.TextDownstream, false)
+		v.reveal = true
+	}
+}
+
+// deleteEmptyCodeBlock removes an empty block of code when Delete or
+// Backspace is pressed at its first line's start, leaving the surrounding
+// paragraphs as they were.
+func (v *view) deleteEmptyCodeBlock(p int) bool {
+	if p < 0 || p >= len(v.paras) || v.caret != v.shown.paraStart(p) {
+		return false
+	}
+	p0 := p
+	for p0 > 0 && v.sameCodeGroup(p0-1, p) {
+		p0--
+	}
+	p1 := p
+	for p1+1 < len(v.paras) && v.sameCodeGroup(p1, p1+1) {
+		p1++
+	}
+	if p != p0 {
+		return false
+	}
+	for i := p0; i <= p1; i++ {
+		if v.para(i).n != 0 {
+			return false
+		}
+	}
+	v.doc.DeleteCodeBlockAt(v.caret)
+	v.doc.blockFocus = 0
+	v.reveal = true
+	return true
+}
+
+// escapeCodeBlock moves the caret out of a block of code when Up or Down
+// is pressed on its first or last visual line. Without this, the padding
+// around a block can keep the caret inside it at its edges.
+func (v *view) escapeCodeBlock(key ui.Key, extend bool) bool {
+	p := v.shown.paraAt(v.caret)
+	if p < 0 || !v.para(p).style.CodeBlock {
+		return false
+	}
+	ps := v.shown.paraStart(p)
+	pe := ps + v.para(p).n
+	s, e := v.lineEdges(v.caret)
+	switch key {
+	case ui.KeyUp:
+		if s != ps {
+			return false
+		}
+		if p == 0 {
+			v.doc.blockFocus = v.para(p).style.CodeBlockID
+			v.reveal = true
+			return true
+		}
+		if v.para(p - 1).style.CodeBlock {
+			if !v.sameCodeGroup(p-1, p) {
+				v.doc.blockFocus = v.para(p).style.CodeBlockID
+				v.reveal = true
+				return true
+			}
+			return false
+		}
+		v.moveTo(max(ps-1, 0), ui.TextUpstream, extend)
+		return true
+	case ui.KeyDown:
+		if e != pe {
+			return false
+		}
+		if p+1 >= len(v.paras) {
+			v.addParagraphAroundCode(p, false)
+			return true
+		}
+		if v.para(p + 1).style.CodeBlock {
+			return false
+		}
+		v.moveTo(v.shown.paraStart(p+1), ui.TextDownstream, extend)
+		return true
+	}
+	return false
+}
+
+// addParagraphAroundCode makes a normal paragraph before or after the block
+// of code at p, so the arrows can leave a block at the document's edge.
+func (v *view) addParagraphAroundCode(p int, before bool) {
+	ps := v.shown.paraStart(p)
+	pe := ps + v.para(p).n
+	if before {
+		// Insert a new, ordinary paragraph before the code line. Doing this
+		// through Enter would put the caret in the code line, and unstyling
+		// it would turn the code's first line into body text.
+		v.edit(func(e *Edit) {
+			e.ReplaceString(ps, ps, "\n", Attributes{})
+			e.FormatParagraphs(ps, ps, func(s *ParagraphStyle) {
+				s.CodeBlock, s.Language, s.CodeBlockID = false, "", 0
+			})
+			e.Select(ps, ps)
+		})
+		return
+	}
+	v.moveTo(pe, ui.TextDownstream, false)
+	v.enter()
+	v.command(func(d *Document) {
+		d.FormatParagraphs(func(s *ParagraphStyle) {
+			s.CodeBlock, s.Language, s.CodeBlockID = false, "", 0
+		})
+	})
+}
+
 // vertical moves the caret up or down lines, keeping its x.
 func (v *view) vertical(lines int, extend bool) {
 	x, y, h := v.caretAt(v.caret, 0, v.affinity)
@@ -230,9 +355,51 @@ func (v *view) key(key ui.Key, mods ui.Modifiers) bool {
 	}
 	a, z := v.selection()
 	n := v.shown.Len()
+	if v.doc.blockFocus != 0 && !readOnly {
+		switch {
+		case key == ui.KeyUp && m == 0:
+			v.leaveBlockFocus()
+			return true
+		case key == ui.KeyDown && m == 0:
+			v.enterBlockFocus()
+			return true
+		case key == ui.KeyEnter && m == 0:
+			first := v.codeBlockFirst(v.doc.blockFocus)
+			v.doc.blockFocus = 0
+			if first >= 0 {
+				v.addParagraphAroundCode(first, true)
+			}
+			return true
+		case (key == ui.KeyDelete || key == ui.KeyBackspace) && m == 0:
+			v.doc.DeleteCodeBlockAt(v.caret)
+			v.doc.blockFocus = 0
+			v.reveal = true
+			return true
+		case key == ui.KeyEscape:
+			v.doc.blockFocus, v.reveal = 0, true
+			return true
+		default:
+			v.doc.blockFocus = 0
+		}
+	}
+
 	switch key {
 	case ui.KeyLeft, ui.KeyRight:
 		left := key == ui.KeyLeft
+		if a == z && m == 0 {
+			p := v.shown.paraAt(v.caret)
+			st := v.para(p).style
+			if st.CodeBlock {
+				ps := v.shown.paraStart(p)
+				pe := ps + v.para(p).n
+				if left && v.caret == ps && p > 0 && v.para(p-1).style.CodeBlock && !v.sameCodeGroup(p-1, p) {
+					return true
+				}
+				if !left && v.caret == pe && p+1 < len(v.paras) && v.para(p+1).style.CodeBlock && !v.sameCodeGroup(p, p+1) {
+					return true
+				}
+			}
+		}
 		switch {
 		case m == ui.Alt && !mac:
 			return false // back and forward
@@ -299,6 +466,26 @@ func (v *view) key(key ui.Key, mods ui.Modifiers) bool {
 		if key == ui.KeyUp {
 			d = -1
 		}
+		if v.escapeCodeBlock(key, shift) {
+			return true
+		}
+		if key == ui.KeyUp {
+			p := v.shown.paraAt(v.caret)
+			ps := v.shown.paraStart(p)
+			if s, _ := v.lineEdges(v.caret); s == ps {
+				// On a paragraph's first line, go to the paragraph above,
+				// whatever the heading's room above would make a line up
+				// land inside this one.
+				if p > 0 {
+					v.moveTo(ps-1, ui.TextUpstream, shift)
+					return true
+				}
+				if !shift && v.opts.OnTop != nil {
+					v.opts.OnTop()
+					return true
+				}
+			}
+		}
 		v.vertical(d, shift)
 		return true
 	case ui.KeyPageUp, ui.KeyPageDown:
@@ -355,14 +542,41 @@ func (v *view) key(key ui.Key, mods ui.Modifiers) bool {
 	p := v.shown.paraAt(v.caret)
 	st := v.para(p).style
 	ps := v.shown.paraStart(p)
+	if st.CodeBlock && (key == ui.KeyDelete || key == ui.KeyBackspace) &&
+		((mac && m == ui.Cmd) || (!mac && m == ui.Ctrl)) {
+		v.doc.DeleteCodeBlockAt(v.caret)
+		v.reveal = true
+		return true
+	}
 	switch key {
 	case ui.KeyBackspace:
+		if m == 0 && a == z && v.caret == ps && st.CodeBlock && v.deleteEmptyCodeBlock(p) {
+			return true
+		}
 		switch {
 		case a != z:
 			v.deleteRange(a, z, false)
+		case m == 0 && v.caret == ps && !st.CodeBlock && v.para(p).n == 0 && p > 0 && v.para(p-1).style.CodeBlock:
+			// An empty paragraph below a block of code: remove that
+			// paragraph, but keep the code block's last (possibly empty)
+			// line and its code style.
+			prev := v.para(p - 1).style
+			start := v.shown.paraStart(p - 1)
+			v.edit(func(e *Edit) {
+				e.ReplaceString(ps-1, ps, "", Attributes{})
+				e.FormatParagraphs(start, start, func(s *ParagraphStyle) { *s = prev })
+				e.Select(ps-1, ps-1)
+			})
+		case m == 0 && v.caret == ps && st.CodeBlock:
+			// Backspace at the start of a code line joins it to the code
+			// line above. At the block's edge it does nothing, so the
+			// block never turns into ordinary text by accident.
+			if p > 0 && v.sameCodeGroup(p-1, p) {
+				v.deleteRange(v.caret-1, v.caret, true)
+			}
 		case m == 0 && v.caret == ps && special(st):
-			// At the start of a list's item, a heading, a quotation or a
-			// block of code, Backspace takes the style away before joining.
+			// At the start of a list's item, a heading or a quotation,
+			// Backspace takes the style away before joining.
 			v.command(func(d *Document) { d.FormatParagraphs(unstyle) })
 		case mac && m == ui.Super:
 			s, _ := v.lineEdges(v.caret)
@@ -374,6 +588,18 @@ func (v *view) key(key ui.Key, mods ui.Modifiers) bool {
 		}
 		return true
 	case ui.KeyDelete:
+		if m == 0 && a == z && v.caret == ps && st.CodeBlock && v.deleteEmptyCodeBlock(p) {
+			return true
+		}
+		pe := ps + v.para(p).n
+		if a == z && st.CodeBlock && v.caret == pe {
+			// Delete at the end of a code line joins the next code line.
+			// At the block's edge it does nothing.
+			if p+1 < len(v.paras) && v.sameCodeGroup(p, p+1) {
+				v.deleteRange(v.caret, v.grapheme(v.caret, 1), false)
+			}
+			return true
+		}
 		switch {
 		case a != z:
 			v.deleteRange(a, z, false)
@@ -384,6 +610,10 @@ func (v *view) key(key ui.Key, mods ui.Modifiers) bool {
 		}
 		return true
 	case ui.KeyEnter:
+		if m == ui.Super || m == ui.Ctrl {
+			v.exitCodeBlock()
+			return true
+		}
 		if m != 0 {
 			return false
 		}
@@ -520,6 +750,15 @@ func (v *view) press(ev ui.InputEvent) bool {
 	if ev.Button != 0 {
 		return false
 	}
+	for _, b := range v.copyButtons {
+		if b.rect.Contains(ev.X, ev.Y) {
+			if v.opts.OnCopyCode != nil {
+				v.opts.OnCopyCode(b.code)
+			}
+			return true
+		}
+	}
+	v.doc.blockFocus = 0
 	v.pressMods = ev.Mods
 	v.pressLink = ""
 	if v.overScrollbar(ev.X) {
@@ -570,7 +809,16 @@ func (v *view) move(ev ui.InputEvent) bool {
 	x, y := v.contentPoint(ev.X, ev.Y)
 	if !v.dragging {
 		cursor := ui.CursorText
-		if _, box := v.taskBox(x, y); box || v.overScrollbar(ev.X) {
+		onCopy := false
+		for _, b := range v.copyButtons {
+			if b.rect.Contains(ev.X, ev.Y) {
+				onCopy = true
+				break
+			}
+		}
+		if onCopy {
+			cursor = ui.CursorPointer
+		} else if _, box := v.taskBox(x, y); box || v.overScrollbar(ev.X) {
 			cursor = ui.CursorDefault
 		} else if i, _ := v.positionAt(x, y); i < v.shown.Len() && v.shown.AttributesAt(i).Link != "" {
 			cursor = ui.CursorPointer

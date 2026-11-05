@@ -27,13 +27,38 @@ func (a *app) view(c *ui.Context) {
 	if a.doc == nil {
 		a.setEditorFocused(false)
 	}
+	a.toastView(c)
+	if a.insertSlash && a.insertMenuOpen && a.doc != nil {
+		anchor := ui.Box(c).Absolute().Left(a.caretX).Top(a.caretY).Width(0).Height(0)
+		a.insertPalette(c, anchor, a.doc)
+	}
 	a.promptModal(c)
 	a.confirmModal(c)
 	a.settingsModal(c)
+	a.pageSettingsModal(c)
 	a.trashModal(c)
 	a.searchModal(c)
 	a.pickerModal(c)
 	a.syncTitle()
+}
+
+// toastView shows a small floating confirmation above the page.
+func (a *app) toastView(c *ui.Context) {
+	if a.toast == "" {
+		return
+	}
+	t := c.Theme()
+	ui.Row(c).Absolute().Left(0).Right(0).Top(96).Justify(ui.Center).Children(func() {
+		ui.Row(c).Padding(7, 12).Gap(8).Radius(8).AlignItems(ui.Center).
+			Background(t.Surface).Border(1, t.Border).
+			Shadow(0, 6, 20, 0, ui.RGBA(0, 0, 0, 0.12)).Children(func() {
+			ui.Box(c).Width(20).Height(20).Radius(10).Background(ui.Hex("#00b96b")).
+				Justify(ui.Center).AlignItems(ui.Center).Children(func() {
+				ui.Icon(c, iconCheck).FontSize(12).TextColor(ui.Hex("#ffffff"))
+			})
+			ui.Text(c, a.toast).FontSize(14).TextColor(t.Text)
+		})
+	})
 }
 
 func (a *app) syncTitle() {

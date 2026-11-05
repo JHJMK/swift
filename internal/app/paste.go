@@ -48,7 +48,12 @@ func (a *app) pasteImage(png []byte) {
 		a.setError(err)
 		return
 	}
-	url, err := a.vault.ImportAssetBytes(a.doc.Rel, "图片.png", png)
+	var url string
+	if a.doc.Note {
+		url, err = a.vault.ImportNoteAssetBytes("图片.png", png)
+	} else {
+		url, err = a.vault.ImportAssetBytes(a.doc.Rel, "图片.png", png)
+	}
 	if err != nil {
 		a.setError(err)
 		return

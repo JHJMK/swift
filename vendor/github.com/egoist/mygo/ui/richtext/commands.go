@@ -239,6 +239,7 @@ func (d *Document) SetHeading(level int) {
 		p.Heading = max(0, min(level, 6))
 		if p.Heading > 0 {
 			p.List, p.Checked, p.CodeBlock = NoList, false, false
+			p.CodeBlockID = 0
 		}
 	})
 }
@@ -255,6 +256,7 @@ func (d *Document) ToggleList(kind ListKind) {
 			return
 		}
 		p.List, p.Heading, p.CodeBlock = kind, 0, false
+		p.CodeBlockID = 0
 		if kind != Tasks {
 			p.Checked = false
 		}
@@ -274,10 +276,17 @@ func (d *Document) ToggleCodeBlock() {
 	d.lock()
 	defer d.mu.Unlock()
 	off := d.paragraphsAll(func(p ParagraphStyle) bool { return p.CodeBlock })
+	id := 0
+	if !off {
+		id = newCodeBlockID()
+	}
 	d.formatParagraphs(func(p *ParagraphStyle) {
 		p.CodeBlock = !off
 		if p.CodeBlock {
 			p.Heading, p.List, p.Checked = 0, NoList, false
+			p.CodeBlockID = id
+		} else {
+			p.CodeBlockID = 0
 		}
 	})
 }
@@ -356,4 +365,75 @@ func normalizeNewlines(s string) string {
 		return s
 	}
 	return strings.NewReplacer("\r\n", "\n", "\r", "\n", " ", "\n").Replace(s)
+}
+
+// DeleteCodeBlock deletes the block of code at the caret, with all of its
+// lines, keeping the surrounding paragraphs.
+func (d *Document) DeleteCodeBlock() {
+	d.lock()
+	defer d.mu.Unlock()
+	d.deleteCodeBlockAt(d.caret)
+}
+
+// DeleteCodeBlockAt deletes the block of code at rune pos.
+func (d *Document) DeleteCodeBlockAt(pos int) {
+	d.lock()
+	defer d.mu.Unlock()
+	d.deleteCodeBlockAt(pos)
+}
+
+// deleteCodeBlockAt deletes the block of code at pos; the caller holds the
+// lock.
+func (d *Document) deleteCodeBlockAt(pos int) bool {
+	st := d.text.ParagraphStyleAt(pos)
+	if !st.CodeBlock {
+		return false
+	}
+	d.blockFocus = 0
+	p := d.text.paraAt(pos)
+	p0 := p
+	for p0 > 0 {
+		prev := d.text.ParagraphStyleAt(d.text.paraStart(p0 - 1))
+		if !prev.CodeBlock || prev.CodeBlockID != st.CodeBlockID {
+			break
+		}
+		p0--
+	}
+	count := 0
+	for range d.text.Paragraphs() {
+		count++
+	}
+	p1 := p
+	for p1+1 < count {
+		next := d.text.ParagraphStyleAt(d.text.paraStart(p1 + 1))
+		if !next.CodeBlock || next.CodeBlockID != st.CodeBlockID {
+			break
+		}
+		p1++
+	}
+	start := d.text.paraStart(p0)
+	end := d.text.paraStart(p1)
+	_, end = d.text.ParagraphRange(end)
+	if p0 == 0 && p1+1 >= count {
+		// The block is the whole page: leave one normal paragraph.
+		d.edit(false, func(e *Edit) {
+			e.ReplaceString(0, d.text.Len(), "", Attributes{})
+			e.FormatParagraphs(0, 0, func(s *ParagraphStyle) {
+				s.CodeBlock, s.Language, s.CodeBlockID = false, "", 0
+			})
+			e.Select(0, 0)
+		})
+		return true
+	}
+	removeStart, removeEnd := start, end
+	if p0 > 0 {
+		removeStart = start - 1
+	} else {
+		removeEnd = end + 1
+	}
+	d.edit(false, func(e *Edit) {
+		e.ReplaceString(removeStart, removeEnd, "", Attributes{})
+		e.Select(removeStart, removeStart)
+	})
+	return true
 }
