@@ -108,9 +108,13 @@ func Run() {
 			Content:         ui.View(a.view),
 		})
 		a.win.OnClose(func(*mygo.CloseEvent) {
+			a.quitting = true
 			a.flushTitle()
 			a.flushDoc()
+			a.flushSync()
 		})
+		// Start after the window exists: the mirror's status repaints it.
+		a.startSync()
 	})
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)

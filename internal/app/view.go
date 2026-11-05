@@ -13,6 +13,9 @@ type dragItem struct {
 
 func (a *app) view(c *ui.Context) {
 	a.applyTheme(c)
+	if result := a.syncNote.takeResult(); result != nil {
+		a.syncResult = result
+	}
 	if a.deferred != nil {
 		fn := a.deferred
 		a.deferred = nil
@@ -39,6 +42,7 @@ func (a *app) view(c *ui.Context) {
 	a.trashModal(c)
 	a.searchModal(c)
 	a.pickerModal(c)
+	a.syncResultModal(c)
 	a.syncTitle()
 }
 

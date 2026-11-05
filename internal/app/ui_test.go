@@ -15,6 +15,10 @@ import (
 
 func newTestApp(t *testing.T) (*app, string, string) {
 	t.Helper()
+	// Keep the settings the tests save out of the user's own config.
+	oldConfigDir := configDirOverride
+	configDirOverride = t.TempDir()
+	t.Cleanup(func() { configDirOverride = oldConfigDir })
 	root := t.TempDir()
 	v, err := OpenVault(root)
 	if err != nil {

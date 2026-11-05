@@ -40,4 +40,5 @@ var (
 	iconMind         = svgIcon(`<circle cx="12" cy="5" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="18" r="2"/><path d="M12 7v4m0 0-7 5m7-5 7 5"/>`)
 	iconWidth        = svgIcon(`<path d="M4 5v14M20 5v14"/><path d="M8 12h8M8 12l2-2M8 12l2 2M16 12l-2-2M16 12l-2 2"/>`)
 	iconCheck        = svgIcon(`<path d="M20 6 9 17l-5-5"/>`)
+	iconAlert        = svgIcon(`<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>`)
 )

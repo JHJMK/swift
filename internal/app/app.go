@@ -169,6 +169,14 @@ type app struct {
 	deferred  func()
 	lastTitle string
 	errMsg    string
+
+	// syncJob mirrors the vault to the remote while it runs, and
+	// syncNote is the message the sync settings show.
+	syncJob          *syncJob
+	syncNote         syncNote
+	syncResult       *syncResultState
+	syncRetryPending bool
+	quitting         bool
 }
 
 func newApp() *app {
@@ -213,6 +221,7 @@ func (a *app) refreshTree() {
 	if n := a.findNode(a.selected); n != nil {
 		a.selectedIsDir = n.IsDir
 	}
+	a.syncTouch()
 }
 
 func (a *app) findNode(rel string) *Node {
@@ -367,6 +376,7 @@ func (a *app) flushDoc() {
 	a.doc.Saved = visible
 	a.doc.MTime = mtime
 	a.doc.Dirty = false
+	a.syncTouch()
 }
 
 func (a *app) markDocDirty() {
@@ -1531,6 +1541,7 @@ func (a *app) adoptWorkspace(abs string) {
 		a.setError(err)
 		return
 	}
+	a.stopSync()
 	a.vault = v
 	a.cfg.Workspace = v.Root
 	if err := saveConfig(a.cfg); err != nil {
@@ -1539,6 +1550,7 @@ func (a *app) adoptWorkspace(abs string) {
 	a.selected = ""
 	a.doc = nil
 	a.refreshTree()
+	a.startSync()
 }
 
 func (a *app) migrateTo(newRoot string) {
@@ -1564,13 +1576,17 @@ func (a *app) migrateTo(newRoot string) {
 		return
 	}
 	a.flushDoc()
+	// Move the files with no mirror reading them halfway.
+	a.stopSync()
 	old, err := os.ReadDir(oldRoot)
 	if err != nil {
+		a.startSync()
 		a.setError(err)
 		return
 	}
 	for _, e := range old {
 		if err := movePath(filepath.Join(oldRoot, e.Name()), filepath.Join(newRoot, e.Name())); err != nil {
+			a.startSync()
 			a.setError(err)
 			return
 		}

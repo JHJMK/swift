@@ -506,7 +506,11 @@ func (v *Vault) Trash(rel string) error {
 		HasChildren: hasDir,
 	}
 	b, _ := json.MarshalIndent(meta, "", "  ")
-	if err := os.WriteFile(filepath.Join(entryDir, "meta.json"), b, 0o644); err != nil {
+	// Write the entry before the file moves, and write it atomically: a
+	// sync reading the trash meanwhile must see the entry, not half of it,
+	// or it would take the file for a deletion.
+	if err := writeFileAtomic(filepath.Join(entryDir, "meta.json"), b); err != nil {
+		os.RemoveAll(entryDir)
 		return err
 	}
 	if err := movePath(abs, filepath.Join(entryDir, "data")); err != nil {

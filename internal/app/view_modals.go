@@ -91,45 +91,87 @@ func (a *app) settingsModal(c *ui.Context) {
 	t := c.Theme()
 	open := true
 	ui.Modal(c, &open, func() {
-		ui.Column(c).Width(600).Padding(24).Gap(16).Children(func() {
+		ui.Column(c).Width(660).Padding(24).Gap(14).Children(func() {
 			ui.Text(c, "设置").FontSize(20).Bold()
 
-			ui.Column(c).Gap(6).Children(func() {
-				ui.Text(c, "文档目录").FontSize(13).Bold()
-				ui.Text(c, a.cfg.Workspace).FontSize(13).TextColor(t.TextMuted).Selectable()
-				ui.Row(c).Gap(8).Children(func() {
-					if ui.Button(c, "更改目录并迁移…").Clicked() {
+			// Leave room for the header and the footer even in a short
+			// window.
+			_, windowHeight := c.Size()
+			scrollHeight := windowHeight - 240
+			if scrollHeight < 220 {
+				scrollHeight = 220
+			}
+			if scrollHeight > 520 {
+				scrollHeight = 520
+			}
+			ui.Scroll(c).MaxHeight(scrollHeight).Children(func() {
+				ui.Column(c).Gap(16).Children(func() {
+					ui.Column(c).Gap(6).Children(func() {
+						ui.Text(c, "文档目录").FontSize(13).Bold()
+						ui.Text(c, a.cfg.Workspace).FontSize(13).TextColor(t.TextMuted).Selectable()
+						ui.Row(c).Gap(8).Children(func() {
+							if ui.Button(c, "更改目录并迁移…").Clicked() {
+								a.settingsOpen = false
+								open = false
+								a.chooseWorkspace()
+							}
+							if ui.Button(c, "在 Finder 中打开").Clicked() {
+								mygo.Shell.OpenPath(a.vault.Root)
+							}
+						})
+						ui.Text(c, "迁移会把当前目录中的全部知识库、文档和回收站移动到新目录；新目录必须为空。").
+							FontSize(12).TextColor(t.TextMuted)
+					})
+
+					ui.Box(c).Height(1).Background(t.Border)
+
+					a.syncSettingsSection(c)
+
+					ui.Box(c).Height(1).Background(t.Border)
+
+					kbs, docs := a.counts()
+					ui.Column(c).Gap(4).Children(func() {
+						ui.Text(c, "当前内容").FontSize(13).Bold()
+						ui.Textf(c, "%d 个知识库 · %d 篇文档 · Markdown 本地存储", kbs, docs).FontSize(13).TextColor(t.TextMuted)
+					})
+
+					ui.Box(c).Height(1).Background(t.Border)
+
+					ui.Column(c).Gap(4).Children(func() {
+						ui.Text(c, "关于").FontSize(13).Bold()
+						ui.Text(c, "语燕 0.1.0 · 纯 Go 桌面应用（MyGo 原生界面）").FontSize(13).TextColor(t.TextMuted)
+					})
+				})
+			})
+
+			msg, isErr := a.syncNote.get()
+			if !isErr && a.syncJob != nil {
+				if st := a.syncJob.engine.Status(); st.LastErr != "" {
+					msg, isErr = "同步失败："+st.LastErr, true
+				}
+			}
+			if !a.cfg.Sync.Enabled {
+				msg = ""
+			}
+			if msg != "" {
+				color := t.TextMuted
+				if isErr {
+					color = t.Danger
+				}
+				ui.Text(c, msg).FontSize(12).TextColor(color)
+			}
+
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				a.syncFooterButtons(c)
+				ui.Box(c).Grow(1)
+				if ui.PrimaryButton(c, "完成").Clicked() {
+					if err := a.applySyncSettings(); err != nil {
+						a.syncNote.set(err.Error(), true)
+						a.update()
+					} else {
 						a.settingsOpen = false
 						open = false
-						a.chooseWorkspace()
 					}
-					if ui.Button(c, "在 Finder 中打开").Clicked() {
-						mygo.Shell.OpenPath(a.vault.Root)
-					}
-				})
-				ui.Text(c, "迁移会把当前目录中的全部知识库、文档和回收站移动到新目录；新目录必须为空。").
-					FontSize(12).TextColor(t.TextMuted)
-			})
-
-			ui.Box(c).Height(1).Background(t.Border)
-
-			kbs, docs := a.counts()
-			ui.Column(c).Gap(4).Children(func() {
-				ui.Text(c, "当前内容").FontSize(13).Bold()
-				ui.Textf(c, "%d 个知识库 · %d 篇文档 · Markdown 本地存储", kbs, docs).FontSize(13).TextColor(t.TextMuted)
-			})
-
-			ui.Box(c).Height(1).Background(t.Border)
-
-			ui.Column(c).Gap(4).Children(func() {
-				ui.Text(c, "关于").FontSize(13).Bold()
-				ui.Text(c, "语燕 0.1.0 · 纯 Go 桌面应用（MyGo 原生界面）").FontSize(13).TextColor(t.TextMuted)
-			})
-
-			ui.Row(c).Justify(ui.End).Children(func() {
-				if ui.PrimaryButton(c, "完成").Clicked() {
-					a.settingsOpen = false
-					open = false
 				}
 			})
 		})
@@ -197,6 +239,7 @@ func (a *app) trashModal(c *ui.Context) {
 										if err := a.vault.PurgeTrash(entry.ID); err != nil {
 											a.setError(err)
 										} else {
+											a.syncPurged([]TrashEntry{entry})
 											a.refreshTrash()
 										}
 										a.update()
@@ -306,7 +349,8 @@ func (a *app) searchModal(c *ui.Context) {
 
 // confirmEmptyTrash asks once more before the whole trash is deleted.
 func (a *app) confirmEmptyTrash() {
-	count := len(a.trash)
+	entries := append([]TrashEntry(nil), a.trash...)
+	count := len(entries)
 	res, err := mygo.Dialog.Message(mygo.MessageOptions{
 		Parent:             a.win,
 		Type:               mygo.MessageWarning,
@@ -321,6 +365,7 @@ func (a *app) confirmEmptyTrash() {
 	if err := a.vault.EmptyTrash(); err != nil {
 		a.setError(err)
 	}
+	a.syncPurged(entries)
 	a.refreshTrash()
 	a.refreshTree()
 	a.update()
