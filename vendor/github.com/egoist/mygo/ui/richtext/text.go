@@ -171,6 +171,10 @@ type ParagraphStyle struct {
 	// Language is a fenced code block's info string, as Markdown keeps it:
 	// "go", "mermaid" and the like.
 	Language string `json:"language,omitempty"`
+	// CodeBlockTitle is the title shown in a block of code's header. It
+	// travels in the fence's info string as title="...", so Markdown keeps
+	// it.
+	CodeBlockTitle string `json:"codeBlockTitle,omitempty"`
 	// ID is the app's name for the paragraph, the key of what it keeps
 	// about it, which the editor does not show. It stays with the
 	// paragraph's text as it is edited (see Text.Replace): a paragraph

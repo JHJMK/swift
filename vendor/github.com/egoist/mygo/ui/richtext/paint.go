@@ -70,7 +70,7 @@ func (v *view) paint(p *ui.Painter, r ui.Rect) {
 	}
 	// The scroll bar while the pointer is over the editor or drags its
 	// thumb, as a scroll container's.
-	if v.inView || v.thumb {
+	if (v.inView || v.thumb) && !v.opts.NoScrollbar {
 		bar := v.bar()
 		bar.Box.X, bar.Box.Y = r.X, r.Y
 		p.Scrollbar(bar, ui.ScrollbarState{Dragging: v.thumb})
@@ -86,7 +86,11 @@ func (v *view) paintCodeCopy(p *ui.Painter, i int, box ui.Rect) {
 	if box.W < 50 {
 		return
 	}
-	r := ui.Rect{X: box.X + box.W - 26, Y: box.Y + 4, W: 20, H: 20}
+	y := box.Y + (CodeBlockHeaderHeight-20)/2
+	if y+20 > box.Y+box.H {
+		y = box.Y + max(0, (box.H-20)/2)
+	}
+	r := ui.Rect{X: box.X + box.W - 30, Y: y, W: 20, H: 20}
 	p.Fill(r, v.look.CodeBackground, 5)
 	p.Icon(codeCopyIcon, ui.Rect{X: r.X + 4, Y: r.Y + 4, W: 12, H: 12}, v.look.Muted)
 	p0 := i
@@ -130,6 +134,11 @@ func (v *view) paintBlock(p *ui.Painter, i int, st ParagraphStyle, x, top, heigh
 		}
 		p.Clip(box, 0, func() { p.Fill(fill, look.CodeBlockBackground, radius) })
 		if first {
+			headerH := min(CodeBlockHeaderHeight, box.H)
+			p.Clip(box, radius, func() {
+				p.Fill(ui.Rect{X: box.X, Y: box.Y, W: box.W, H: headerH}, look.CodeBackground, 0)
+			})
+			p.Fill(ui.Rect{X: box.X, Y: box.Y + headerH - 1, W: box.W, H: 1}, look.Muted.Alpha(0.16), 0)
 			v.paintCodeCopy(p, i, box)
 		}
 		if v.doc.blockFocus != 0 && v.doc.blockFocus == st.CodeBlockID && first {

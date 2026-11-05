@@ -51,7 +51,7 @@ func (t Text) Markdown() string {
 					fence += "`"
 				}
 			}
-			b.WriteString(quote + fence + strings.TrimSpace(st.Language) + "\n")
+			b.WriteString(quote + fence + fenceInfo(st.Language, st.CodeBlockTitle) + "\n")
 			for ; i < len(paras) && sameBlock(i); i++ {
 				b.WriteString(quote + plainOf(paras[i]) + "\n")
 			}

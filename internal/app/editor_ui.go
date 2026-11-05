@@ -335,6 +335,10 @@ func (a *app) editorToolbar(c *ui.Context, doc *docState) {
 				})
 			}
 		})
+		if f.Paragraph.CodeBlock {
+			gap()
+			a.codeBlockLanguageToolbar(c, doc, f.Paragraph.CodeBlockID, f.Paragraph.Language)
+		}
 		gap()
 		textBtn("B", "加粗（⌘B）", f.Bold == richtext.FormatOn, func(e ui.Element) ui.Element { return e.Bold() }, doc.Doc.ToggleBold)
 		textBtn("I", "斜体（⌘I）", f.Italic == richtext.FormatOn, func(e ui.Element) ui.Element { return e.Italic() }, doc.Doc.ToggleItalic)

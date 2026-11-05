@@ -47,7 +47,8 @@ func (v *view) input(ev ui.InputEvent) bool {
 		return true
 	case ui.InputScroll:
 		before := v.scroll
-		v.setScroll(max(0, min(v.scroll+float64(ev.DY), v.hs.top(len(v.paras))-float64(v.viewH))))
+		content := v.hs.top(len(v.paras)) + float64(v.opts.BottomPadding)
+		v.setScroll(max(0, min(v.scroll+float64(ev.DY), content-float64(v.viewH))))
 		// At an end, the wheel goes on to the containers around.
 		return v.scroll != before
 	}
@@ -275,7 +276,7 @@ func (v *view) addParagraphAroundCode(p int, before bool) {
 		v.edit(func(e *Edit) {
 			e.ReplaceString(ps, ps, "\n", Attributes{})
 			e.FormatParagraphs(ps, ps, func(s *ParagraphStyle) {
-				s.CodeBlock, s.Language, s.CodeBlockID = false, "", 0
+				s.CodeBlock, s.Language, s.CodeBlockID, s.CodeBlockTitle = false, "", 0, ""
 			})
 			e.Select(ps, ps)
 		})
@@ -285,7 +286,7 @@ func (v *view) addParagraphAroundCode(p int, before bool) {
 	v.enter()
 	v.command(func(d *Document) {
 		d.FormatParagraphs(func(s *ParagraphStyle) {
-			s.CodeBlock, s.Language, s.CodeBlockID = false, "", 0
+			s.CodeBlock, s.Language, s.CodeBlockID, s.CodeBlockTitle = false, "", 0, ""
 		})
 	})
 }
@@ -905,12 +906,15 @@ func (v *view) taskBox(x float32, y float64) (int, bool) {
 
 // overScrollbar reports whether x of the element is on the scroll bar.
 func (v *view) overScrollbar(x float32) bool {
+	if v.opts.NoScrollbar {
+		return false
+	}
 	return v.hs.top(len(v.paras)) > float64(v.viewH) && x >= v.rect.W-scrollbarWidth
 }
 
 // bar returns the scroll bar, in the element.
 func (v *view) bar() ui.Scrollbar {
-	return ui.Scrollbar{Box: ui.Rect{W: v.rect.W, H: v.rect.H}, View: v.viewH, Content: float32(v.hs.top(len(v.paras))), Offset: float32(v.scroll)}
+	return ui.Scrollbar{Box: ui.Rect{W: v.rect.W, H: v.rect.H}, View: v.viewH, Content: float32(v.hs.top(len(v.paras))) + v.opts.BottomPadding, Offset: float32(v.scroll)}
 }
 
 // thumbBox returns the top and the height of the scroll bar's thumb, in

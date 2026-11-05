@@ -176,6 +176,9 @@ type app struct {
 	syncNote         syncNote
 	syncResult       *syncResultState
 	showSyncSecret   bool
+	codeTitleEditing int
+	codeTitleFocus   bool
+	codeTitleFocused bool
 	syncRetryPending bool
 	quitting         bool
 }
@@ -270,6 +273,9 @@ func (a *app) update() {
 // openDoc shows a document in the editor.
 func (a *app) openDoc(rel string) {
 	a.findOpen = false
+	a.codeTitleEditing = 0
+	a.codeTitleFocus = false
+	a.codeTitleFocused = false
 	if a.doc != nil && a.doc.Rel == rel {
 		a.selected = rel
 		a.selectedIsDir = false
@@ -670,6 +676,9 @@ func (a *app) openNote() {
 	if a.doc != nil && a.doc.Note {
 		return
 	}
+	a.codeTitleEditing = 0
+	a.codeTitleFocus = false
+	a.codeTitleFocused = false
 	a.flushTitle()
 	a.flushDoc()
 	title, body, err := a.vault.ReadNote()

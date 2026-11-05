@@ -51,6 +51,12 @@ type EditorOptions struct {
 	// OnTop runs when Up is pressed at the very start of the text, so the
 	// app can move the focus above the editor.
 	OnTop func()
+	// NoScrollbar hides the editor's scroll bar and its pointer target:
+	// the wheel, the trackpad and the keyboard still scroll it.
+	NoScrollbar bool
+	// BottomPadding is blank room after the last paragraph, in DIPs, that
+	// scrolling can reveal.
+	BottomPadding float32
 	// ContextMenu, when set, builds the editor's context menu in the
 	// app's look, in place of the editing commands' system menu.
 	ContextMenu func(m *ui.Menu)
@@ -525,7 +531,9 @@ func (v *view) space(p int, st ParagraphStyle) (above, below float32) {
 		below = look.size * h.Bottom
 	case st.CodeBlock:
 		if p == 0 || !v.sameCodeGroup(p-1, p) {
-			above = look.size * look.CodeBlockPadding[1]
+			// The header above the first line, with its title, language and
+			// copy control.
+			above = CodeBlockHeaderHeight
 			if p > 0 && v.para(p-1).style.CodeBlock {
 				above += v.codeBlockGap()
 			}
@@ -661,8 +669,14 @@ func (v *view) paraLayout(p int) *paraView {
 	if compose != "" {
 		spans = append(spans, v.look.span(compose, typing, para.style))
 	}
-	if para.style.CodeBlock && para.style.Language != "" {
-		spans = syntaxSpans(spans, para.style.Language)
+	if para.style.CodeBlock {
+		first := p
+		for first > 0 && v.sameCodeGroup(first-1, p) {
+			first--
+		}
+		if language := v.para(first).style.Language; language != "" {
+			spans = syntaxSpans(spans, language)
+		}
 	}
 	// The indent is on the side the paragraph starts at, the right of one
 	// reading right to left.
@@ -836,7 +850,7 @@ func (v *view) layout(w, h float32) {
 		}
 		v.place(h)
 	}
-	total := v.hs.top(len(v.paras))
+	total := v.hs.top(len(v.paras)) + float64(v.opts.BottomPadding)
 	if s := max(0, min(v.scroll, total-float64(h))); s != v.scroll {
 		v.setScroll(s)
 		v.place(h)

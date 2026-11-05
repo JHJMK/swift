@@ -2,6 +2,7 @@ package richtext
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -239,7 +240,7 @@ func (d *Document) SetHeading(level int) {
 		p.Heading = max(0, min(level, 6))
 		if p.Heading > 0 {
 			p.List, p.Checked, p.CodeBlock = NoList, false, false
-			p.CodeBlockID = 0
+			p.CodeBlockID, p.Language, p.CodeBlockTitle = 0, "", ""
 		}
 	})
 }
@@ -256,7 +257,7 @@ func (d *Document) ToggleList(kind ListKind) {
 			return
 		}
 		p.List, p.Heading, p.CodeBlock = kind, 0, false
-		p.CodeBlockID = 0
+		p.CodeBlockID, p.Language, p.CodeBlockTitle = 0, "", ""
 		if kind != Tasks {
 			p.Checked = false
 		}
@@ -284,11 +285,57 @@ func (d *Document) ToggleCodeBlock() {
 		p.CodeBlock = !off
 		if p.CodeBlock {
 			p.Heading, p.List, p.Checked = 0, NoList, false
-			p.CodeBlockID = id
+			p.CodeBlockID, p.Language, p.CodeBlockTitle = id, "", ""
 		} else {
-			p.CodeBlockID = 0
+			p.CodeBlockID, p.Language, p.CodeBlockTitle = 0, "", ""
 		}
 	})
+}
+
+// SetCodeBlockTitle sets the title of the block of code with id, for all
+// the paragraphs of the block, as its header edits it.
+func (d *Document) SetCodeBlockTitle(id int, title string) {
+	d.formatCodeBlock(id, func(p *ParagraphStyle) { p.CodeBlockTitle = title })
+}
+
+// SetCodeBlockLanguage sets the language of the block of code with id,
+// which its header chooses, and which its Markdown fence keeps.
+func (d *Document) SetCodeBlockLanguage(id int, language string) {
+	d.formatCodeBlock(id, func(p *ParagraphStyle) { p.Language = language })
+}
+
+// formatCodeBlock changes the style of every paragraph of the block of
+// code with id, leaving the selection as it was.
+func (d *Document) formatCodeBlock(id int, fn func(*ParagraphStyle)) {
+	d.lock()
+	defer d.mu.Unlock()
+	start, end, ok := d.codeBlockSpan(id)
+	if !ok {
+		return
+	}
+	anchor, caret, typing := d.anchor, d.caret, d.typing
+	d.edit(false, func(e *Edit) { e.FormatParagraphs(start, end, fn) })
+	d.anchor, d.caret, d.typing = anchor, caret, typing
+}
+
+// codeBlockSpan returns the runes of the block of code with id, from its
+// first paragraph to its last.
+func (d *Document) codeBlockSpan(id int) (start, end int, ok bool) {
+	start = -1
+	for off, p := range d.text.Paragraphs() {
+		if !p.Style.CodeBlock || p.Style.CodeBlockID != id {
+			continue
+		}
+		if start < 0 {
+			start, ok = off, true
+		}
+		n := 0
+		for _, r := range p.Runs {
+			n += utf8.RuneCountInString(r.Text)
+		}
+		end = off + n
+	}
+	return start, end, ok
 }
 
 // maxIndent is the deepest a paragraph indents.
@@ -419,7 +466,7 @@ func (d *Document) deleteCodeBlockAt(pos int) bool {
 		d.edit(false, func(e *Edit) {
 			e.ReplaceString(0, d.text.Len(), "", Attributes{})
 			e.FormatParagraphs(0, 0, func(s *ParagraphStyle) {
-				s.CodeBlock, s.Language, s.CodeBlockID = false, "", 0
+				s.CodeBlock, s.Language, s.CodeBlockID, s.CodeBlockTitle = false, "", 0, ""
 			})
 			e.Select(0, 0)
 		})

@@ -91,51 +91,59 @@ func (a *app) editorView(c *ui.Context) {
 						key = "note"
 					}
 					fontSize, lineHeight := a.pageFont(doc)
-					el := richtext.EditorBase(c.Key(key), doc.Doc, richtext.EditorOptions{
-						Label:         "文档正文",
-						Placeholder:   bodyPlaceholder(doc),
-						Font:          ui.Font{Size: fontSize, LineHeight: lineHeight},
-						Theme:         theme,
-						ReadOnly:      a.findOpen || doc.ReadOnly,
-						OnLinkCommand: a.askLink,
-						OnLink:        a.openEditorLink,
-						OnCaret:       a.rememberCaret,
-						OnTop:         a.focusTitleFromBody,
-						OnCopyCode:    a.copyCodeBlock,
-						ContextMenu: func(m *ui.Menu) {
-							if m.Item("粘贴").Chosen() {
-								a.pending = func() { a.pasteFromMenu() }
-							}
-							if m.Item("粘贴并匹配样式").Chosen() {
-								a.pending = func() { a.pasteAndMatchStyle() }
-							}
-							if doc.Doc.Formatting().Paragraph.CodeBlock {
-								m.Separator()
-								if m.Item("删除整个代码块").Chosen() {
-									a.pending = func() {
-										doc.Doc.DeleteCodeBlock()
-										a.markDocDirty()
-										a.update()
+					// The editor and the code blocks' headers, which sit
+					// over the room the editor leaves above each block.
+					editBox := ui.Box(c).FillWidth().Grow(1).Clip()
+					editBox.Children(func() {
+						el := richtext.EditorBase(c.Key(key), doc.Doc, richtext.EditorOptions{
+							Label:         "文档正文",
+							Placeholder:   bodyPlaceholder(doc),
+							Font:          ui.Font{Size: fontSize, LineHeight: lineHeight},
+							Theme:         theme,
+							ReadOnly:      a.findOpen || doc.ReadOnly,
+							NoScrollbar:   true,
+							BottomPadding: 80,
+							OnLinkCommand: a.askLink,
+							OnLink:        a.openEditorLink,
+							OnCaret:       a.rememberCaret,
+							OnTop:         a.focusTitleFromBody,
+							OnCopyCode:    a.copyCodeBlock,
+							ContextMenu: func(m *ui.Menu) {
+								if m.Item("粘贴").Chosen() {
+									a.pending = func() { a.pasteFromMenu() }
+								}
+								if m.Item("粘贴并匹配样式").Chosen() {
+									a.pending = func() { a.pasteAndMatchStyle() }
+								}
+								if doc.Doc.Formatting().Paragraph.CodeBlock {
+									m.Separator()
+									if m.Item("删除整个代码块").Chosen() {
+										a.pending = func() {
+											doc.Doc.DeleteCodeBlock()
+											a.markDocDirty()
+											a.update()
+										}
 									}
 								}
-							}
-						},
-					}).FillWidth().Grow(1)
+							},
+						}).FillWidth().FillHeight()
 
-					if a.focusBody {
-						a.focusBody = false
-						doc.Doc.SetSelection(0, 0)
-						el.Focus()
-					}
-					if a.findRefocus {
-						a.findRefocus = false
-						el.Focus()
-					}
-					if el.Changed() {
-						a.markDocDirty()
-						a.maybeSlashMenu()
-					}
-					a.setEditorFocused(el.Focused())
+						if a.focusBody {
+							a.focusBody = false
+							doc.Doc.SetSelection(0, 0)
+							el.Focus()
+						}
+						if a.findRefocus {
+							a.findRefocus = false
+							el.Focus()
+						}
+						if el.Changed() {
+							a.markDocDirty()
+							a.maybeSlashMenu()
+						}
+						a.setEditorFocused(el.Focused())
+						a.codeBlockHeaders(c, editBox, el, doc)
+					})
 				})
 			})
 			if a.outlineOpen {

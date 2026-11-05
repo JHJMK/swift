@@ -54,11 +54,9 @@ func (m *mdReader) block(i int, st ParagraphStyle, depth int) {
 	case parser.CodeBlock:
 		st.CodeBlock, st.Heading = true, 0
 		st.CodeBlockID = newCodeBlockID()
-		st.Language = ""
+		st.Language, st.CodeBlockTitle = "", ""
 		if b.Fenced {
-			info := strings.TrimSpace(b.Info())
-			language, _, _ := strings.Cut(info, " ")
-			st.Language = strings.TrimSpace(language)
+			st.Language, st.CodeBlockTitle = parseFenceInfo(b.Info())
 		}
 		n := m.d.LineCount(i)
 		for k := range n {

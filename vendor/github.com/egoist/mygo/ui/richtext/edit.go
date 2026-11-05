@@ -240,10 +240,12 @@ func (v *view) enter() {
 	}
 	if !v.opts.NoMarkdown && a == z && v.caret == pe && !st.CodeBlock {
 		if line := v.lineOf(p); strings.HasPrefix(line, "```") && !strings.Contains(line[3:], "`") {
+			language, title := parseFenceInfo(line[3:])
 			v.edit(func(e *Edit) {
 				e.ReplaceString(ps, pe, "", Attributes{})
 				e.FormatParagraphs(ps, ps, func(s *ParagraphStyle) {
-					*s = ParagraphStyle{CodeBlock: true, Indent: s.Indent, ID: s.ID, CodeBlockID: newCodeBlockID()}
+					*s = ParagraphStyle{CodeBlock: true, Indent: s.Indent, ID: s.ID, CodeBlockID: newCodeBlockID(),
+						Language: language, CodeBlockTitle: title}
 				})
 				e.Select(ps, ps)
 			})
@@ -292,7 +294,7 @@ func (v *view) exitCodeBlock() {
 	v.enter()
 	v.command(func(d *Document) {
 		d.FormatParagraphs(func(s *ParagraphStyle) {
-			s.CodeBlock, s.Language, s.CodeBlockID = false, "", 0
+			s.CodeBlock, s.Language, s.CodeBlockID, s.CodeBlockTitle = false, "", 0, ""
 		})
 	})
 }
