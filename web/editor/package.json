@@ -1,0 +1,28 @@
+{
+  "name": "swift-editor",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/language-data": "^6.5.2",
+    "@codemirror/search": "^6.7.2",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.15",
+    "@lezer/highlight": "^1.2.5",
+    "mermaid": "^11.17.2",
+    "turndown": "^7.2.5"
+  },
+  "devDependencies": {
+    "@types/turndown": "^5.0.5",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.7"
+  }
+}

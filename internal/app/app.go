@@ -29,6 +29,13 @@ type docState struct {
 	Dirty bool
 	MTime time.Time
 
+	// Markdown is the text the web editor holds, the authoritative text
+	// while Web is set. The native rich text model is parsed from it only
+	// when an export needs it.
+	Markdown string
+	// Web tells that the document is shown in the page's web editor.
+	Web bool
+
 	// TitleDraft is the title as typed on the page, and ShowTitle tells
 	// that the page shows the large title field above the text. Every
 	// page does, so the name is editable where it is read.
@@ -177,10 +184,23 @@ type app struct {
 	syncResult       *syncResultState
 	showSyncSecret   bool
 	codeTitleEditing int
+	sidebarCollapsed bool
+	treeCollapsed    bool
+	kbRailOpen       bool
 	codeTitleFocus   bool
 	codeTitleFocused bool
 	syncRetryPending bool
+	refocusEditor    bool
+	mermaidRefresh   bool
+	mermaidEditing   int
 	quitting         bool
+
+	// The Obsidian-style document page is a web view.
+	webView   *mygo.WebView
+	webReady  bool
+	webFailed bool
+	webSentID string
+	editorWeb bool
 }
 
 func newApp() *app {
@@ -288,17 +308,25 @@ func (a *app) openDoc(rel string) {
 		a.setError(err)
 		return
 	}
+	web := a.editorWeb && a.webView != nil
 	text := richtext.ParseMarkdown(md)
 	if strings.TrimSpace(md) == "" {
 		text = richtext.NewText("")
 	}
-	text = a.loadImages(text, rel)
-	text, previews := a.addMermaidPreviews(text, rel)
+	var previews map[string]bool
+	saved := md
+	if !web {
+		text = a.loadImages(text, rel)
+		text, previews = a.addMermaidPreviews(text, rel)
+		saved = text.Markdown()
+	}
 	a.doc = &docState{
 		Rel:             rel,
 		Title:           titleOf(rel),
 		Doc:             richtext.NewDocument(text),
-		Saved:           text.Markdown(),
+		Saved:           saved,
+		Markdown:        md,
+		Web:             web,
 		MTime:           mtime,
 		mermaidPreviews: previews,
 	}
@@ -316,6 +344,12 @@ func (a *app) openDoc(rel string) {
 		*a.openState(parent) = true
 	}
 	a.vault.TouchRecent(rel)
+	if web {
+		a.refocusEditor = false
+		a.sendWebOpen()
+	} else {
+		a.refocusEditor = true
+	}
 }
 
 func titleOf(rel string) string {
@@ -344,23 +378,30 @@ func parentRel(rel string) string {
 	return d
 }
 
-// flushDoc writes pending edits.
+// flushDoc writes pending edits. The page's Markdown is authoritative for
+// documents it holds; the native editor's text otherwise.
 func (a *app) flushDoc() {
 	if a.doc == nil || !a.doc.Dirty {
 		return
 	}
-	if a.doc.ReadOnly {
-		a.doc.Dirty = false
+	doc := a.doc
+	if doc.ReadOnly {
+		doc.Dirty = false
 		return
 	}
-	visible := a.doc.Doc.Text().Markdown()
-	if visible == a.doc.Saved && !a.doc.Note {
-		a.doc.Dirty = false
+	md := doc.Markdown
+	if !doc.Web {
+		md = doc.Doc.Text().Markdown()
+	}
+	if md == doc.Saved && !doc.Note {
+		doc.Dirty = false
+		if doc.Web {
+			a.sendWebStatus("saved", "已保存")
+		}
 		return
 	}
-	md := visible
-	if a.doc.Note {
-		title := a.doc.Title
+	if doc.Note {
+		title := doc.Title
 		if title == "" {
 			title = "小记"
 		}
@@ -368,21 +409,31 @@ func (a *app) flushDoc() {
 			a.setError(err)
 			return
 		}
-		a.doc.Saved = md
-		a.doc.Dirty = false
+		doc.Saved = md
+		doc.MTime = time.Now()
+		doc.Dirty = false
+		if doc.Web {
+			a.sendWebStatus("saved", "已保存")
+		}
 		return
 	}
-	if len(a.doc.mermaidPreviews) > 0 {
-		md = stripMermaidPreviews(md, a.doc.mermaidPreviews)
+	if !doc.Web && len(doc.mermaidPreviews) > 0 {
+		md = stripMermaidPreviews(md, doc.mermaidPreviews)
 	}
-	mtime, err := a.vault.WriteDoc(a.doc.Rel, md)
+	mtime, err := a.vault.WriteDoc(doc.Rel, md)
 	if err != nil {
 		a.setError(err)
+		if doc.Web {
+			a.sendWebStatus("error", "保存失败")
+		}
 		return
 	}
-	a.doc.Saved = visible
-	a.doc.MTime = mtime
-	a.doc.Dirty = false
+	doc.Saved = md
+	doc.MTime = mtime
+	doc.Dirty = false
+	if doc.Web {
+		a.sendWebStatus("saved", "已保存")
+	}
 	a.syncTouch()
 }
 
@@ -434,6 +485,15 @@ func (a *app) loadImages(text richtext.Text, docRel string) richtext.Text {
 // insertImage asks for a picture and puts it into the open document.
 func (a *app) insertImage() {
 	if a.doc == nil || a.doc.ReadOnly {
+		return
+	}
+	if a.isWebDoc() {
+		result, err := a.webPickImage(a.docKey())
+		if err != nil {
+			a.setError(err)
+			return
+		}
+		a.sendWebInsert(result.Text)
 		return
 	}
 	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
@@ -689,16 +749,23 @@ func (a *app) openNote() {
 	if title == "" {
 		title = "小记"
 	}
-	text := a.loadImages(richtext.ParseMarkdown(body), "")
+	web := a.editorWeb && a.webView != nil
+	text := richtext.ParseMarkdown(body)
 	if strings.TrimSpace(body) == "" {
 		text = richtext.NewText("")
 	}
+	saved := body
+	if !web {
+		text = a.loadImages(text, "")
+	}
 	a.doc = &docState{
-		Note:  true,
-		Title: title,
-		Doc:   richtext.NewDocument(text),
-		Saved: body,
-		MTime: time.Now(),
+		Note:     true,
+		Title:    title,
+		Doc:      richtext.NewDocument(text),
+		Saved:    saved,
+		Markdown: body,
+		Web:      web,
+		MTime:    time.Now(),
 	}
 	a.loadPageSettings(a.doc)
 	a.doc.ShowTitle = true
@@ -706,6 +773,11 @@ func (a *app) openNote() {
 	a.selected = ""
 	a.selectedIsDir = false
 	a.findOpen = false
+	if web {
+		a.sendWebOpen()
+	} else {
+		a.refocusEditor = true
+	}
 	a.update()
 }
 
@@ -745,6 +817,9 @@ func (a *app) saveNoteTo(rel string) error {
 		title = "小记"
 	}
 	md := a.doc.Doc.Text().Markdown()
+	if a.doc.Web {
+		md = a.doc.Markdown
+	}
 	dir, err := a.pickerDir(rel)
 	if err != nil {
 		return err
@@ -830,6 +905,15 @@ func (a *app) renameOpenDoc(title string) error {
 	a.doc.Rel = newRel
 	a.doc.Title = titleOf(newRel)
 	a.doc.TitleDraft = a.doc.Title
+	if a.cfg != nil && a.cfg.PageSettings != nil {
+		if settings, ok := a.cfg.PageSettings[oldRel]; ok {
+			delete(a.cfg.PageSettings, oldRel)
+			a.cfg.PageSettings[newRel] = settings
+			if err := saveConfig(a.cfg); err != nil {
+				a.setError(err)
+			}
+		}
+	}
 	a.selected = newRel
 	a.selectedIsDir = false
 	for parent := parentRel(newRel); parent != ""; parent = parentRel(parent) {
@@ -1343,6 +1427,10 @@ func (a *app) openFind() {
 	if a.doc == nil {
 		return
 	}
+	if a.isWebDoc() {
+		a.sendWebCommand("search", true)
+		return
+	}
 	if !a.findOpen {
 		a.findOpen = true
 		a.findQuery = ""
@@ -1355,6 +1443,10 @@ func (a *app) openFind() {
 
 // closeFind hides the find bar and gives the text its focus back.
 func (a *app) closeFind() {
+	if a.isWebDoc() {
+		a.sendWebCommand("close-search", false)
+		return
+	}
 	a.findOpen = false
 	a.findFocus = false
 	a.findRefocus = true
@@ -1609,6 +1701,7 @@ func (a *app) exportDoc(format string) {
 		return
 	}
 	a.flushDoc()
+	a.refreshDocFromMarkdown()
 	title := a.doc.Title
 	if title == "" {
 		title = "未命名"
@@ -1667,7 +1760,9 @@ func (a *app) writeMarkdownZip(dst, title string) error {
 	}
 	a.flushDoc()
 	md := a.doc.Doc.Text().Markdown()
-	if len(a.doc.mermaidPreviews) > 0 {
+	if a.doc.Web {
+		md = a.doc.Markdown
+	} else if len(a.doc.mermaidPreviews) > 0 {
 		md = stripMermaidPreviews(md, a.doc.mermaidPreviews)
 	}
 	tmp, err := os.MkdirTemp("", "swift-markdown-")

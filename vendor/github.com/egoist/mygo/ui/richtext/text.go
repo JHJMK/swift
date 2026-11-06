@@ -393,6 +393,9 @@ func (t Text) paraStart(p int) int {
 
 // ParagraphRange returns where the paragraph holding rune i starts and
 // ends, before its newline.
+// ParagraphStart returns the rune where paragraph i starts.
+func (t Text) ParagraphStart(i int) int { return t.paraStart(i) }
+
 func (t Text) ParagraphRange(i int) (start, end int) {
 	p := t.paraAt(i)
 	start = t.paraStart(p)

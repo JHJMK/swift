@@ -192,3 +192,218 @@ func TestCodeBlockLanguageMenuAtBottom(t *testing.T) {
 		t.Fatalf("the language changed to %q", language)
 	}
 }
+
+// An empty code block title shows nothing; its fixed field's room is
+// clickable, with a hint, and opens the title field.
+func TestCodeBlockTitleEmpty(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	if _, err := a.vault.WriteDoc(rel, "```\nselect 1\n```\n"); err != nil {
+		t.Fatal(err)
+	}
+	a.openDoc(rel)
+	tt := ui.NewTester(a.view, 1180, 760)
+	tt.Frame()
+	if _, ok := tt.Find("代码块标题"); ok {
+		t.Fatalf("the empty title still shows a placeholder: %q", tt.Texts())
+	}
+	if !tt.HasText("请输入代码块标题") {
+		t.Fatalf("the empty title has no hint: %q", tt.Texts())
+	}
+	if err := tt.Click("请输入代码块标题"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.codeTitleEditing == 0 {
+		t.Fatal("clicking the empty title did not open its field")
+	}
+}
+
+// The wheel over a code block's title scrolls the editor, as over the
+// code itself.
+func TestCodeBlockTitleScrollsEditor(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	var lines []string
+	lines = append(lines, "```sql title=\"查询\"", "select 1", "```")
+	for i := 0; i < 70; i++ {
+		lines = append(lines, "", fmt.Sprintf("第 %d 段：正文。", i))
+	}
+	if _, err := a.vault.WriteDoc(rel, strings.Join(lines, "\n")); err != nil {
+		t.Fatal(err)
+	}
+	a.openDoc(rel)
+	a.doc.Doc.SetSelection(0, 0)
+	a.focusBody = true
+	tt := ui.NewTester(a.view, 1180, 760)
+	tt.Frame()
+	before := a.doc.Doc.VisibleParagraphs()
+	rect, ok := tt.Find("查询")
+	if !ok {
+		t.Fatalf("the code title is not in view: %q", tt.Texts())
+	}
+	tt.Scroll(rect.X+rect.W/2, rect.Y+rect.H/2, 0, 300)
+	tt.Frame()
+	after := a.doc.Doc.VisibleParagraphs()
+	if len(before) == 0 || len(after) == 0 {
+		t.Fatalf("no paragraphs: %+v -> %+v", before, after)
+	}
+	if after[0].Top >= before[0].Top-1 {
+		t.Fatalf("the wheel over the title did not scroll: %+v -> %+v", before[0], after[0])
+	}
+}
+
+// The header's delete control removes the block at once, and the edit
+// undoes.
+func TestCodeBlockDeleteButton(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	if _, err := a.vault.WriteDoc(rel, "```sql\nSELECT 1;\n```\n"); err != nil {
+		t.Fatal(err)
+	}
+	a.openDoc(rel)
+	tt := ui.NewTester(a.view, 1180, 760)
+	tt.Frame()
+	if err := tt.Click("删除代码块"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	for _, p := range a.doc.Doc.Text().Paragraphs() {
+		if p.Style.CodeBlock {
+			t.Fatal("the block of code stayed")
+		}
+	}
+	tt.Key(ui.Super, ui.KeyZ)
+	tt.Frame()
+	found := false
+	for _, p := range a.doc.Doc.Text().Paragraphs() {
+		if p.Style.CodeBlock {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("undo did not bring the block back: %q", a.doc.Doc.Text().Markdown())
+	}
+}
+
+// Cmd+A in a block of code selects that block, not the whole page.
+func TestCodeBlockSelectAll(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	if _, err := a.vault.WriteDoc(rel, "开头\n\n```\nline1\nline2\n```\n\n结尾\n"); err != nil {
+		t.Fatal(err)
+	}
+	a.openDoc(rel)
+	a.focusBody = true
+	tt := ui.NewTester(a.view, 1180, 760)
+	tt.Frame()
+	plain := []rune(a.doc.Doc.Text().PlainText())
+	at := 0
+	for i := 0; i+5 <= len(plain); i++ {
+		if string(plain[i:i+5]) == "line1" {
+			at = i
+			break
+		}
+	}
+	a.doc.Doc.SetSelection(at+2, at+2)
+	tt.Frame()
+	tt.Key(ui.Super, ui.KeyA)
+	s, e := a.doc.Doc.Selection()
+	selected := string(plain[s:e])
+	if !strings.Contains(selected, "line1") || !strings.Contains(selected, "line2") {
+		t.Fatalf("the code was not selected: %q", selected)
+	}
+	if strings.Contains(selected, "开头") || strings.Contains(selected, "结尾") {
+		t.Fatalf("the selection left the block: %q", selected)
+	}
+
+	a.doc.Doc.SetSelection(0, 0)
+	tt.Frame()
+	tt.Key(ui.Super, ui.KeyA)
+	s, e = a.doc.Doc.Selection()
+	if s != 0 || e != len(plain) {
+		t.Fatalf("outside a block Cmd+A selected %d..%d of %d", s, e, len(plain))
+	}
+}
+
+// A bash fence is laballed Bash and keeps its source.
+func TestCodeBlockBashLanguage(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	if _, err := a.vault.WriteDoc(rel, "```bash\necho hi\n```\n"); err != nil {
+		t.Fatal(err)
+	}
+	a.openDoc(rel)
+	tt := ui.NewTester(a.view, 1180, 760)
+	tt.Frame()
+	if !tt.HasText("Bash") {
+		t.Fatalf("the bash block is not labelled Bash: %q", tt.Texts())
+	}
+	if !strings.Contains(a.doc.Doc.Text().Markdown(), "```bash") {
+		t.Fatalf("the fence language is gone: %q", a.doc.Doc.Text().Markdown())
+	}
+}
+
+// Deleting the lower of two blocks leaves the one above it, even when
+// they are next to each other.
+func TestCodeBlockDeleteSecond(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	md := "```text\nfirst\n```\n\n```text\n\n```\n\n正文\n"
+	if _, err := a.vault.WriteDoc(rel, md); err != nil {
+		t.Fatal(err)
+	}
+	a.openDoc(rel)
+	tt := ui.NewTester(a.view, 1180, 760)
+	tt.Frame()
+	r, ok := tt.Find("删除代码块")
+	if !ok {
+		t.Fatal("no delete button")
+	}
+	boxes := a.doc.Doc.VisibleParagraphs()
+	if len(boxes) < 2 {
+		t.Fatalf("no second block: %+v", boxes)
+	}
+	tt.ClickAt(r.X+r.W/2, r.Y+r.H/2+(boxes[1].Top-boxes[0].Top))
+	tt.Frame()
+	md = a.doc.Doc.Text().Markdown()
+	if !strings.Contains(md, "first") {
+		t.Fatalf("the upper block was deleted too: %q", md)
+	}
+	if strings.Contains(md, "```text\n\n```") {
+		t.Fatalf("the lower block stayed: %q", md)
+	}
+}
+
+// Mermaid is one of the languages the header offers, and choosing it asks
+// for a render.
+func TestMermaidLanguageChoice(t *testing.T) {
+	for _, l := range codeLanguages {
+		if l.Code == "mermaid" {
+			if l.Label != "Mermaid" {
+				t.Fatalf("mermaid is labelled %q", l.Label)
+			}
+			goto found
+		}
+	}
+	t.Fatal("Mermaid is not in the language list")
+found:
+	a, _, rel := newTestApp(t)
+	if _, err := a.vault.WriteDoc(rel, "```text\nselect 1\n```\n"); err != nil {
+		t.Fatal(err)
+	}
+	a.openDoc(rel)
+	tt := ui.NewTester(a.view, 1180, 760)
+	tt.Frame()
+	if err := tt.Click("纯文本"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if err := tt.Click("Mermaid"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	var lang string
+	for _, p := range a.doc.Doc.Text().Paragraphs() {
+		if p.Style.CodeBlock {
+			lang = p.Style.Language
+		}
+	}
+	if lang != "mermaid" {
+		t.Fatalf("the language is %q", lang)
+	}
+}

@@ -17,6 +17,8 @@ var codeLanguages = []struct{ Label, Code string }{
 	{"TypeScript", "ts"},
 	{"Python", "py"},
 	{"Shell", "sh"},
+	{"Bash", "bash"},
+	{"Mermaid", "mermaid"},
 	{"JSON", "json"},
 	{"YAML", "yaml"},
 	{"Rust", "rust"},
@@ -40,31 +42,15 @@ func (a *app) codeBlockHeaders(c *ui.Context, editBox, editor ui.Element, doc *d
 	if len(boxes) == 0 {
 		return
 	}
-	var paras []richtext.Paragraph
-	for _, p := range doc.Doc.Text().Paragraphs() {
-		paras = append(paras, p)
-	}
-	if len(paras) == 0 {
-		return
-	}
 	box := editBox.Bounds()
 	ed := editor.Bounds()
 	if ed.W <= 0 || ed.H <= 0 {
 		return
 	}
 	for _, p := range boxes {
-		if p.Index < 0 || p.Index >= len(paras) {
+		st := p.Style
+		if !st.CodeBlock || !p.FirstOfCode || doc.Doc.CodeBlockHidden(st.CodeBlockID) {
 			continue
-		}
-		st := paras[p.Index].Style
-		if !st.CodeBlock {
-			continue
-		}
-		if p.Index > 0 {
-			prev := paras[p.Index-1].Style
-			if prev.CodeBlock && prev.CodeBlockID == st.CodeBlockID {
-				continue
-			}
 		}
 		top := ed.Y - box.Y + p.Top - richtext.CodeBlockHeaderHeight
 		if top+richtext.CodeBlockHeaderHeight <= 0 || top >= box.H {
@@ -75,51 +61,113 @@ func (a *app) codeBlockHeaders(c *ui.Context, editBox, editor ui.Element, doc *d
 		if width < 160 {
 			width = ed.W - 16
 		}
-		ui.Row(c).Key(codeHeaderKey{id: st.CodeBlockID, index: p.Index}).Absolute().Left(left).Top(top).
-			Width(width).Height(richtext.CodeBlockHeaderHeight).
-			Padding(0, 4).Gap(8).AlignItems(ui.Center).Children(func() {
-			a.codeBlockHeaderControls(c, doc, st, width)
+		if doc.Doc.CodeBlockFocus() == st.CodeBlockID {
+			// The block's outside edge has the caret; the editor paints
+			// it at the block's left, where the wrapper clips it, so show
+			// the mark here too.
+			ui.Box(c).Absolute().Left(left - 6).Top(top + 6).Width(2).Height(18).
+				Radius(1).Background(c.Theme().Accent)
+		}
+		header := ui.Row(c).Key(codeHeaderKey{id: st.CodeBlockID, index: p.Index}).Absolute().
+			Left(left).Top(top).Width(width).Height(richtext.CodeBlockHeaderHeight).
+			Padding(0, 4).Gap(8).AlignItems(ui.Center)
+		// The wheel over a header scrolls the page, as it does over the
+		// code itself.
+		header.HandleInput(func(ev ui.InputEvent) bool {
+			if ev.Kind != ui.InputScroll || doc.Doc == nil {
+				return false
+			}
+			doc.Doc.ScrollBy(ev.DY)
+			return true
+		})
+		header.Children(func() {
+			a.codeBlockHeaderControls(c, doc, st, width, p.Index)
 		})
 	}
 }
 
 // codeBlockHeaderControls are the title field and the language menu of
 // one block of code.
-func (a *app) codeBlockHeaderControls(c *ui.Context, doc *docState, st richtext.ParagraphStyle, width float32) {
+func (a *app) codeBlockHeaderControls(c *ui.Context, doc *docState, st richtext.ParagraphStyle, width float32, index int) {
+	t := c.Theme()
 	if a.codeTitleEditing == st.CodeBlockID {
 		a.codeTitleInput(c, doc, st, width)
-		ui.Box(c).Grow(1)
 	} else {
-		a.codeTitleText(c, doc, st)
+		a.codeTitleText(c, doc, st, width)
 	}
+	ui.Box(c).Grow(1)
 
 	a.codeLanguageSelect(c, doc, st)
+	if strings.EqualFold(strings.TrimSpace(st.Language), "mermaid") {
+		refresh := ui.ButtonBase(c).Label("重新渲染图表").Tooltip("重新渲染 Mermaid 图表").
+			Width(24).Height(24).Radius(5).Justify(ui.Center).AlignItems(ui.Center)
+		if refresh.Hovered() {
+			refresh.Background(ui.Hex(hoverBg))
+		}
+		refresh.Children(func() {
+			ui.Icon(c, iconRefresh).FontSize(14).TextColor(t.TextMuted)
+		})
+		if refresh.Clicked() {
+			a.mermaidRefresh = true
+			a.update()
+		}
+	}
+	del := ui.ButtonBase(c).Label("删除代码块").Tooltip("删除代码块").
+		Width(24).Height(24).Radius(5).Justify(ui.Center).AlignItems(ui.Center)
+	if del.Hovered() {
+		del.Background(ui.Hex("#fdecec"))
+	}
+	del.Children(func() {
+		color := t.TextMuted
+		if del.Hovered() {
+			color = t.Danger
+		}
+		ui.Icon(c, iconTrash).FontSize(14).TextColor(color)
+	})
+	if del.Clicked() {
+		// Delete the paragraph's block itself: an empty block starts where
+		// the block above ends, and a rune lookup there takes the block
+		// above.
+		doc.Doc.DeleteCodeBlockAtIndex(index)
+		a.codeTitleEditing = 0
+		a.codeTitleFocused = false
+		a.refocusEditor = true
+		a.markDocDirty()
+		a.update()
+	}
 }
 
 // codeTitleText is the title as it reads when it is not being edited: no
 // field, no border, the whole title across the header.
-func (a *app) codeTitleText(c *ui.Context, doc *docState, st richtext.ParagraphStyle) {
-	t := c.Theme()
-	title := strings.TrimSpace(st.CodeBlockTitle)
-	row := ui.Row(c).Grow(1).Height(28).Padding(2, 6).Radius(5).OnClick(func() {
+func (a *app) codeTitleText(c *ui.Context, doc *docState, st richtext.ParagraphStyle, width float32) {
+	edit := func() {
 		a.codeTitleEditing = st.CodeBlockID
 		a.codeTitleFocus = true
 		a.codeTitleFocused = false
 		a.update()
-	})
+	}
+	title := strings.TrimSpace(st.CodeBlockTitle)
+	if title == "" {
+		// An empty title shows nothing: the fixed field's room is the
+		// target, and the pointer and the tooltip say what it is.
+		area := ui.Box(c).Width(codeTitleFieldWidth(width)).Height(28).Radius(5).
+			Padding(2, 6).Cursor(ui.CursorPointer).
+			Tooltip("请输入代码块标题").Label("请输入代码块标题").OnClick(edit)
+		if area.Hovered() {
+			area.Background(ui.Hex(hoverBg))
+		}
+		return
+	}
+	// A written title is the target, not the empty room to its right.
+	row := ui.Row(c).Height(28).Padding(2, 6).Radius(5).
+		Cursor(ui.CursorPointer).Tooltip(title).OnClick(edit)
+	row.MaxWidth(max(width-150, 80))
 	if row.Hovered() {
 		row.Background(ui.Hex(hoverBg))
 	}
 	row.Children(func() {
-		if title == "" {
-			ui.Text(c, "代码块标题").FontSize(13).TextColor(t.TextMuted).SingleLine().Grow(1)
-			return
-		}
 		ui.Text(c, title).FontSize(13).SingleLine().Grow(1)
 	})
-	if title != "" {
-		row.Tooltip(title)
-	}
 }
 
 // codeTitleInput is the title while it is edited: a field of a fixed
@@ -128,8 +176,8 @@ func (a *app) codeTitleText(c *ui.Context, doc *docState, st richtext.ParagraphS
 func (a *app) codeTitleInput(c *ui.Context, doc *docState, st richtext.ParagraphStyle, width float32) {
 	t := c.Theme()
 	title := st.CodeBlockTitle
-	fieldWidth := min(float32(200), max(width-120, 120))
-	input := ui.TextInputBase(c, &title).Label("代码块标题").Placeholder("代码块标题").
+	fieldWidth := codeTitleFieldWidth(width)
+	input := ui.TextInputBase(c, &title).Label("代码块标题").Placeholder("请输入代码块标题").
 		FontSize(13).Height(28).Width(fieldWidth).Padding(2, 8).Radius(5).
 		Background(t.Surface).Border(1, t.Accent)
 	if a.codeTitleFocus {
@@ -150,6 +198,10 @@ func (a *app) codeTitleInput(c *ui.Context, doc *docState, st richtext.Paragraph
 	}
 }
 
+func codeTitleFieldWidth(width float32) float32 {
+	return min(float32(200), max(width-120, 120))
+}
+
 // codeLanguageSelect is the language dropdown of a block of code. It is
 // the framework's select, which handles its popup where the pointer goes
 // and where the window has room.
@@ -161,6 +213,9 @@ func (a *app) codeLanguageSelect(c *ui.Context, doc *docState, st richtext.Parag
 		if code, ok := byLabel[label]; ok && code != st.Language {
 			doc.Doc.SetCodeBlockLanguage(st.CodeBlockID, code)
 			a.markDocDirty()
+			if code == "mermaid" {
+				a.mermaidRefresh = true
+			}
 			a.update()
 		}
 	}
@@ -194,6 +249,9 @@ func (a *app) codeBlockLanguageToolbar(c *ui.Context, doc *docState, id int, lan
 		if code, ok := byLabel[label]; ok && code != language {
 			doc.Doc.SetCodeBlockLanguage(id, code)
 			a.markDocDirty()
+			if code == "mermaid" {
+				a.mermaidRefresh = true
+			}
 			a.update()
 		}
 	}
@@ -214,7 +272,9 @@ func codeLanguageLabel(code string) string {
 		return "TypeScript"
 	case "py", "python", "python3":
 		return "Python"
-	case "sh", "bash", "shell", "zsh", "console":
+	case "bash":
+		return "Bash"
+	case "sh", "shell", "zsh", "console":
 		return "Shell"
 	case "json":
 		return "JSON"

@@ -15,6 +15,15 @@ func (a *app) insertAttachment() {
 	if a.doc == nil || a.doc.ReadOnly {
 		return
 	}
+	if a.isWebDoc() {
+		result, err := a.webPickAttachment(a.docKey())
+		if err != nil {
+			a.setError(err)
+			return
+		}
+		a.sendWebInsert(result.Text)
+		return
+	}
 	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
 		Parent:      a.win,
 		Title:       "插入附件",

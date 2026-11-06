@@ -134,7 +134,7 @@ func TestNoteSlashMenu(t *testing.T) {
 		t.Fatalf("note slash menu did not open: %v %v", a.insertMenuOpen, a.insertSlash)
 	}
 	cmds := a.slashCommands(a.doc, func() {})
-	want := []string{"附件", "画板", "流程图", "思维导图"}
+	want := []string{"附件", "Mermaid 图表"}
 	if len(cmds) != len(want) {
 		t.Fatalf("slash menu has %d commands: %+v", len(cmds), cmds)
 	}

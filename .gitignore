@@ -6,3 +6,8 @@ mygo_windows_*.syso
 .DS_Store
 .vscode
 /swift
+
+# Web editor build tooling
+/web/editor/node_modules/
+/web/editor/.vite/
+AGENTS.md

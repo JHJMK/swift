@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <title>语燕</title>
+  </head>
+  <body class="theme-light">
+    <div id="app">
+      <header id="toolbar" class="editor-toolbar" role="toolbar" aria-label="格式工具栏"></header>
+      <div id="main">
+        <div id="scroller" class="view-scroller">
+          <div id="page" class="markdown-source-view">
+            <div
+              id="title"
+              class="inline-title"
+              contenteditable="true"
+              spellcheck="false"
+              tabindex="0"
+              data-placeholder="未命名"
+            ></div>
+            <div id="editor"></div>
+          </div>
+        </div>
+        <aside id="outline" class="outline" hidden>
+          <div class="outline-head">大纲</div>
+          <div id="outline-list" class="outline-list"></div>
+        </aside>
+      </div>
+      <footer id="status" class="status-bar">
+        <div class="status-left">
+          <span id="status-state" class="status-bar-item">已保存</span>
+        </div>
+        <div class="status-right">
+          <span id="status-mode" class="status-bar-item" hidden></span>
+          <span id="status-count" class="status-bar-item">0 个词 0 个字符</span>
+        </div>
+      </footer>
+      <div id="toast" class="notice" hidden></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

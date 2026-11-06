@@ -96,6 +96,26 @@ func paraText(p richtext.Paragraph) string {
 	return b.String()
 }
 
+// reloadForMermaid saves the page and opens it again, which renders its
+// Mermaid blocks anew. Rendering starts a browser, so it is on request,
+// not on every keystroke.
+func (a *app) reloadForMermaid() {
+	if a.doc == nil || a.doc.Rel == "" || a.doc.Note || a.doc.ReadOnly {
+		return
+	}
+	rel := a.doc.Rel
+	anchor, caret := a.doc.Doc.Selection()
+	a.flushDoc()
+	a.doc = nil
+	a.mermaidEditing = 0
+	a.openDoc(rel)
+	if a.doc != nil {
+		n := a.doc.Doc.Text().Len()
+		a.doc.Doc.SetSelection(min(anchor, n), min(caret, n))
+	}
+	a.update()
+}
+
 // addMermaidPreviews puts a rendered picture above each Mermaid block, so
 // the page shows the diagram and keeps its source below it.
 func (a *app) addMermaidPreviews(text richtext.Text, docRel string) (richtext.Text, map[string]bool) {
@@ -168,9 +188,15 @@ func renderMermaidPNG(cli, src string) ([]byte, bool) {
 	if err := os.WriteFile(in, []byte(src), 0o644); err != nil {
 		return nil, false
 	}
+	// Chrome, which mermaid-cli drives, cannot start its sandbox on many
+	// machines, as this one: render without it, for a local diagram.
+	puppeteer := filepath.Join(dir, "puppeteer.json")
+	if err := os.WriteFile(puppeteer, []byte(`{"args":["--no-sandbox","--disable-setuid-sandbox"]}`), 0o644); err != nil {
+		return nil, false
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, cli, "-i", in, "-o", out, "-b", "white", "--size", "1600", "-q")
+	cmd := exec.CommandContext(ctx, cli, "-i", in, "-o", out, "-b", "white", "--size", "1600", "-q", "-p", puppeteer)
 	if err := cmd.Run(); err != nil {
 		return nil, false
 	}

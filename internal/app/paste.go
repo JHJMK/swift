@@ -1,6 +1,8 @@
 package app
 
 import (
+	"strings"
+
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
@@ -13,6 +15,10 @@ import (
 // the usual Cmd+V.
 func (a *app) pasteFromMenu() {
 	if a.doc == nil || a.doc.ReadOnly {
+		return
+	}
+	if a.isWebDoc() {
+		a.pasteFromMenuWeb()
 		return
 	}
 	defer a.update()
@@ -39,6 +45,49 @@ func (a *app) pasteFromMenu() {
 	}
 	if b, err := data.Read(transfer.Text); err == nil && len(b) > 0 {
 		a.insertPlainText(string(b))
+	}
+}
+
+// pasteFromMenuWeb pastes into the page: pictures become assets, rich
+// text becomes Markdown.
+func (a *app) pasteFromMenuWeb() {
+	if a.doc == nil || a.doc.ReadOnly {
+		return
+	}
+	defer a.update()
+	if png := mygo.Clipboard.ReadImage(); png != nil {
+		result, err := a.webSaveAsset("图片.png", png, true)
+		if err != nil {
+			a.setError(err)
+			return
+		}
+		a.sendWebInsert(result.Text)
+		return
+	}
+	data, err := mygo.Clipboard.Read(transfer.HTML, richtext.RTF, transfer.Markdown, transfer.Text)
+	if err != nil {
+		return
+	}
+	if b, err := data.Read(transfer.HTML); err == nil && len(b) > 0 {
+		md := richtext.ParseHTML(string(b)).Markdown()
+		if strings.TrimSpace(md) != "" {
+			a.sendWebInsert(md)
+			return
+		}
+	}
+	if b, err := data.Read(richtext.RTF); err == nil && len(b) > 0 {
+		md := richtext.ParseRTF(b).Markdown()
+		if strings.TrimSpace(md) != "" {
+			a.sendWebInsert(md)
+			return
+		}
+	}
+	if b, err := data.Read(transfer.Markdown); err == nil && len(b) > 0 {
+		a.sendWebInsert(string(b))
+		return
+	}
+	if b, err := data.Read(transfer.Text); err == nil && len(b) > 0 {
+		a.sendWebInsert(string(b))
 	}
 }
 
@@ -113,6 +162,16 @@ func (a *app) setEditorFocused(focused bool) {
 // attributes, as Edit > Paste and Match Style does.
 func (a *app) pasteAndMatchStyle() {
 	if a.doc == nil || a.doc.ReadOnly {
+		return
+	}
+	if a.isWebDoc() {
+		data, err := mygo.Clipboard.Read(transfer.Text)
+		if err != nil {
+			return
+		}
+		if b, err := data.Read(transfer.Text); err == nil && len(b) > 0 {
+			a.sendWebInsert(string(b))
+		}
 		return
 	}
 	defer a.update()

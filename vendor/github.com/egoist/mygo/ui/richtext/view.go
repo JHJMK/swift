@@ -116,8 +116,10 @@ type view struct {
 	// width is the content's, which the layouts wrap at; padX and padY
 	// the room around the text in the element.
 	width, viewH float32
-	// laidLook is the look the layouts were made in.
+	// laidLook is the look the layouts were made in, and laidHidden the
+	// visibility of the paragraphs.
 	laidLook    lookKey
+	laidHidden  uint64
 	padX, padY  float32
 	rect        ui.Rect
 	scroll      float64
@@ -517,6 +519,9 @@ func (v *view) codeBlockFirst(id int) int {
 // margins, a block of code's padding at its ends, the spacing between
 // body paragraphs, above the second.
 func (v *view) space(p int, st ParagraphStyle) (above, below float32) {
+	if v.hiddenParagraph(p) {
+		return 0, 0
+	}
 	look := &v.look
 	switch {
 	case body(st):
@@ -540,6 +545,17 @@ func (v *view) space(p int, st ParagraphStyle) (above, below float32) {
 		}
 		if p+1 >= len(v.paras) || !v.sameCodeGroup(p, p+1) {
 			below = look.size * look.CodeBlockPadding[1]
+		}
+	}
+	// A paragraph next to a block of code keeps a little air from it; the
+	// space is the paragraph's, outside the block's own background.
+	if !st.CodeBlock {
+		air := look.size * 0.8
+		if p > 0 && v.para(p-1).style.CodeBlock {
+			above += air
+		}
+		if p+1 < len(v.paras) && v.para(p+1).style.CodeBlock {
+			below += air
 		}
 	}
 	return above, below
@@ -605,6 +621,10 @@ func (v *view) lineOf(p int) string { return rope.TextOf(v.shown.text).Line(p) }
 // caret: it keeps the layout until the paragraph's runs or style change.
 func (v *view) paraLayout(p int) *paraView {
 	pv := &v.paras[p]
+	if v.hiddenParagraph(p) {
+		pv.h, pv.space = 0, 0
+		return pv
+	}
 	para := v.para(p)
 	compose, at := "", 0
 	if v.compose != "" {
@@ -821,7 +841,11 @@ func (v *view) setScroll(y float64) {
 // layout lays out the paragraphs in view of a content box w×h, and those
 // the caret is in when it is to be revealed.
 func (v *view) layout(w, h float32) {
-	if key := v.lookKey(); w != v.width || key != v.laidLook {
+	hidden := uint64(0)
+	if v.doc != nil {
+		hidden = v.doc.VisibilityVersion()
+	}
+	if key := v.lookKey(); w != v.width || key != v.laidLook || hidden != v.laidHidden {
 		// Another width, font or theme: every paragraph anew.
 		v.laidLook = key
 		for i := range v.paras {
@@ -829,6 +853,7 @@ func (v *view) layout(w, h float32) {
 		}
 		v.laid = 0
 		v.width = w
+		v.laidHidden = hidden
 		v.resetHeights()
 	}
 	v.viewH = h
@@ -883,6 +908,25 @@ func (v *view) place(h float32) {
 	v.last = min(p, n-1)
 }
 
+// ScrollBy scrolls the editor by dy DIPs, as the wheel over a control
+// the app lays over the editor, such as a code block's header, does.
+func (d *Document) ScrollBy(dy float32) {
+	d.lock()
+	v := d.shownIn.Value()
+	d.mu.Unlock()
+	if v == nil || v.doc != d || v.width <= 0 || v.viewH <= 0 {
+		return
+	}
+	total := v.hs.top(len(v.paras)) + float64(v.opts.BottomPadding)
+	next := max(0, min(v.scroll+float64(dy), max(0, total-float64(v.viewH))))
+	if next == v.scroll {
+		return
+	}
+	v.setScroll(next)
+	v.reveal = false
+	v.services.Invalidate()
+}
+
 // ParagraphBox is where a paragraph is in an editor, as
 // Document.VisibleParagraphs gives it.
 type ParagraphBox struct {
@@ -894,6 +938,17 @@ type ParagraphBox struct {
 	// so that a mark at Top lines up with its first line. Top is below 0
 	// for a paragraph scrolled partly out at the top.
 	Top, Height float32
+	// Style is the paragraph's style, for an app that lays controls over
+	// it, as a header over its block of code.
+	Style ParagraphStyle
+	// FirstOfCode tells that this is the first paragraph of a block of
+	// code, where its header goes.
+	FirstOfCode bool
+	// AttachmentURL and AttachmentName are those of the picture or file
+	// the paragraph shows, if it is one; Image* are where that picture
+	// is in the editor's element.
+	AttachmentURL, AttachmentName                string
+	ImageLeft, ImageTop, ImageWidth, ImageHeight float32
 }
 
 // VisibleParagraphs returns the paragraphs in view in the editor showing
@@ -927,11 +982,54 @@ func (d *Document) VisibleParagraphs() []ParagraphBox {
 // boxes appends the boxes of the paragraphs in view to out.
 func (v *view) boxes(out []ParagraphBox) []ParagraphBox {
 	for i := v.first; i <= v.last && i < len(v.paras); i++ {
+		if v.hiddenParagraph(i) {
+			continue
+		}
 		pv := v.paraLayout(i)
-		_, y := v.origin(i)
-		out = append(out, ParagraphBox{Index: i, Start: v.shown.paraStart(i), Top: v.padY + float32(y-v.scroll), Height: pv.h - pv.space})
+		px, y := v.origin(i)
+		st := v.para(i).style
+		var url, name string
+		for _, r := range v.para(i).runs {
+			if at := r.a.Attachment; at != nil {
+				url, name = at.URL, at.Name
+				break
+			}
+		}
+		var il, it, iw, ih float32
+		if objs := pv.layout.Objects(); len(objs) > 0 {
+			o := objs[0]
+			il = v.padX + px + o.Rect.X
+			it = v.padY + float32(y-v.scroll) + o.Rect.Y
+			iw, ih = o.Rect.W, o.Rect.H
+		}
+		out = append(out, ParagraphBox{
+			Index: i, Start: v.shown.paraStart(i),
+			Top: v.padY + float32(y-v.scroll), Height: pv.h - pv.space,
+			Style: st, FirstOfCode: st.CodeBlock && (i == 0 || !v.sameCodeGroup(i-1, i)),
+			AttachmentURL: url, AttachmentName: name,
+			ImageLeft: il, ImageTop: it, ImageWidth: iw, ImageHeight: ih,
+		})
 	}
 	return out
+}
+
+// hiddenParagraph reports whether the app left paragraph p out of the
+// page: a block of code with its preview shown, or a preview whose block
+// is being edited.
+func (v *view) hiddenParagraph(p int) bool {
+	if v.doc == nil || p < 0 || p >= len(v.paras) {
+		return false
+	}
+	st := v.para(p).style
+	if st.CodeBlock && v.doc.CodeBlockHidden(st.CodeBlockID) {
+		return true
+	}
+	for _, r := range v.para(p).runs {
+		if at := r.a.Attachment; at != nil && at.URL != "" && v.doc.PreviewHidden(at.URL) {
+			return true
+		}
+	}
+	return false
 }
 
 // moved asks for another frame when the app read the paragraphs in view

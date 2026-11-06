@@ -775,3 +775,54 @@ func TestExportMarkdownZip(t *testing.T) {
 		t.Fatalf("zip lacks the image: %v", names)
 	}
 }
+
+// The insert menu can also open from the menu bar shortcut, without the
+// slash key.
+func TestInsertMenuShortcut(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	a.openDoc(rel)
+	a.openInsertMenu()
+	tt := ui.NewTester(a.view, 1180, 760)
+	tt.Frame()
+	if !a.insertMenuOpen || a.insertSlash {
+		t.Fatalf("insert menu did not open: %v %v", a.insertMenuOpen, a.insertSlash)
+	}
+	if !tt.HasText("附件") || !tt.HasText("Mermaid 图表") {
+		t.Fatalf("insert menu has no commands: %q", tt.Texts())
+	}
+}
+
+// A slash after text opens the block menu too: the user may type it at
+// the end of a line, not only at its first character.
+func TestSlashMenuAfterText(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	a.openDoc(rel)
+	a.focusBody = true
+	tt := ui.NewTester(a.view, 1180, 760)
+	tt.Frame()
+	n := a.doc.Doc.Text().Len()
+	a.doc.Doc.SetSelection(n, n)
+	tt.Frame()
+	tt.Type("/")
+	tt.Frame()
+	if !a.insertMenuOpen || !a.insertSlash {
+		t.Fatalf("no menu after a slash at the end: %q", a.doc.Doc.Text().Markdown())
+	}
+	if strings.HasSuffix(a.doc.Doc.Text().Markdown(), "/") {
+		t.Fatalf("the slash was kept: %q", a.doc.Doc.Text().Markdown())
+	}
+	if !tt.HasText("附件") {
+		t.Fatalf("the block menu is empty: %q", tt.Texts())
+	}
+	// A URL keeps its slashes.
+	a.insertMenuOpen = false
+	a.insertSlash = false
+	a.insertQuery = ""
+	a.doc.Doc.SetSelection(0, 0)
+	tt.Frame()
+	tt.Type("https://")
+	tt.Frame()
+	if a.insertMenuOpen {
+		t.Fatal("a URL opened the block menu")
+	}
+}

@@ -55,6 +55,28 @@ func (v *view) input(ev ui.InputEvent) bool {
 	return false
 }
 
+// selectAll selects the block of code the caret is in, or the whole text
+// otherwise.
+func (v *view) selectAll() {
+	n := v.shown.Len()
+	p := v.shown.paraAt(v.caret)
+	if p >= 0 && p < len(v.paras) && v.para(p).style.CodeBlock {
+		first, last := p, p
+		for first > 0 && v.sameCodeGroup(first-1, p) {
+			first--
+		}
+		for last+1 < len(v.paras) && v.sameCodeGroup(last, last+1) {
+			last++
+		}
+		v.selAnchor = v.shown.paraStart(first)
+		v.caret = v.shown.paraStart(last) + v.para(last).n
+		v.affinity = ui.TextDownstream
+		return
+	}
+	v.selAnchor, v.caret = 0, n
+	v.affinity = ui.TextDownstream
+}
+
 // moveTo puts the caret at i, extending the selection or not.
 func (v *view) moveTo(i int, affinity ui.TextAffinity, extend bool) {
 	i = max(0, min(i, v.shown.Len()))
@@ -514,7 +536,7 @@ func (v *view) key(key ui.Key, mods ui.Modifiers) bool {
 		return true
 	case ui.KeyA:
 		if m == ui.Cmd {
-			v.selAnchor, v.caret = 0, n
+			v.selectAll()
 			return true
 		}
 	case ui.KeyC, ui.KeyX, ui.KeyV, ui.KeyZ, ui.KeyY:
@@ -729,7 +751,7 @@ func (v *view) editCommand(name string) bool {
 		}
 		return true
 	case "selectAll":
-		v.selAnchor, v.caret = 0, v.shown.Len()
+		v.selectAll()
 		return true
 	case "delete":
 		if a != z && !v.opts.ReadOnly {

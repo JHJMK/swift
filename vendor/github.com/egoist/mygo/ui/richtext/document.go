@@ -44,6 +44,98 @@ type Document struct {
 	shownIn weak.Pointer[view]
 	read    bool
 	boxes   []ParagraphBox
+	// hiddenBlocks and hiddenPreviews are what an app leaves out of the
+	// page without changing the text, as a Mermaid preview replaces its
+	// source while it is not edited.
+	hiddenBlocks   map[int]bool
+	hiddenPreviews map[string]bool
+	hiddenVersion  uint64
+}
+
+// SetCodeBlockHidden leaves a block of code out of the page, or shows it
+// again, without changing the text or its undo history.
+func (d *Document) SetCodeBlockHidden(id int, hidden bool) {
+	d.lock()
+	defer d.mu.Unlock()
+	if d.hiddenBlocks == nil {
+		d.hiddenBlocks = map[int]bool{}
+	}
+	if d.hiddenBlocks[id] == hidden {
+		return
+	}
+	if hidden {
+		d.hiddenBlocks[id] = true
+	} else {
+		delete(d.hiddenBlocks, id)
+	}
+	d.hiddenVersion++
+}
+
+// CodeBlockHidden reports whether SetCodeBlockHidden left the block out.
+func (d *Document) CodeBlockHidden(id int) bool {
+	d.lock()
+	defer d.mu.Unlock()
+	return d.hiddenBlocks[id]
+}
+
+// SetPreviewHidden leaves an attachment paragraph, by the URL of the
+// picture, out of the page, or shows it again.
+func (d *Document) SetPreviewHidden(url string, hidden bool) {
+	d.lock()
+	defer d.mu.Unlock()
+	if d.hiddenPreviews == nil {
+		d.hiddenPreviews = map[string]bool{}
+	}
+	if d.hiddenPreviews[url] == hidden {
+		return
+	}
+	if hidden {
+		d.hiddenPreviews[url] = true
+	} else {
+		delete(d.hiddenPreviews, url)
+	}
+	d.hiddenVersion++
+}
+
+// PreviewHidden reports whether SetPreviewHidden left the picture out.
+func (d *Document) PreviewHidden(url string) bool {
+	d.lock()
+	defer d.mu.Unlock()
+	return d.hiddenPreviews[url]
+}
+
+// VisibilityVersion counts changes of what is hidden, for the editor to
+// lay out the page again.
+func (d *Document) VisibilityVersion() uint64 {
+	d.lock()
+	defer d.mu.Unlock()
+	return d.hiddenVersion
+}
+
+// ResetHidden shows every paragraph SetCodeBlockHidden and
+// SetPreviewHidden left out.
+func (d *Document) ResetHidden() {
+	d.lock()
+	defer d.mu.Unlock()
+	if len(d.hiddenBlocks) == 0 && len(d.hiddenPreviews) == 0 {
+		return
+	}
+	d.hiddenBlocks, d.hiddenPreviews = nil, nil
+	d.hiddenVersion++
+}
+
+// CodeBlockStart returns the rune where the block of code with id starts.
+func (d *Document) CodeBlockStart(id int) (int, bool) {
+	d.lock()
+	defer d.mu.Unlock()
+	for i := 0; i < d.text.ParagraphCount(); i++ {
+		start := d.text.ParagraphStart(i)
+		st := d.text.ParagraphStyleAt(start)
+		if st.CodeBlock && st.CodeBlockID == id {
+			return start, true
+		}
+	}
+	return 0, false
 }
 
 // change is a change of a document: the runes from start to oldEnd

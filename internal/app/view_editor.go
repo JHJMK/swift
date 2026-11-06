@@ -12,6 +12,10 @@ import (
 // editorView builds the page's title, toolbar, text and footer. The editor
 // reports its caret so the slash menu can sit beside it.
 func (a *app) editorView(c *ui.Context) {
+	if a.isWebDoc() {
+		a.webEditorView(c)
+		return
+	}
 	doc := a.doc
 	ui.Column(c).Fill().Children(func() {
 		a.docTopBar(c, doc)
@@ -58,9 +62,12 @@ func (a *app) editorView(c *ui.Context) {
 						})
 						if a.focusTitle {
 							a.focusTitle = false
+							// The title, not the text, takes the keys now.
+							a.refocusEditor = false
 							title = title.Focus()
 						} else if untitledTitle(doc.Title) {
 							title = title.AutoFocus()
+							a.refocusEditor = false
 						}
 						if title.Submitted() {
 							// The rename may rebuild the editor under a new
@@ -93,7 +100,9 @@ func (a *app) editorView(c *ui.Context) {
 					fontSize, lineHeight := a.pageFont(doc)
 					// The editor and the code blocks' headers, which sit
 					// over the room the editor leaves above each block.
-					editBox := ui.Box(c).FillWidth().Grow(1).Clip()
+					// The eight DIPs at the left leave the block's outer
+					// caret outside its background.
+					editBox := ui.Box(c).FillWidth().Grow(1).Padding(0, 0, 0, 8).Clip()
 					editBox.Children(func() {
 						el := richtext.EditorBase(c.Key(key), doc.Doc, richtext.EditorOptions{
 							Label:         "文档正文",
@@ -137,12 +146,17 @@ func (a *app) editorView(c *ui.Context) {
 							a.findRefocus = false
 							el.Focus()
 						}
+						if a.refocusEditor {
+							a.refocusEditor = false
+							el.Focus()
+						}
 						if el.Changed() {
 							a.markDocDirty()
 							a.maybeSlashMenu()
 						}
 						a.setEditorFocused(el.Focused())
 						a.codeBlockHeaders(c, editBox, el, doc)
+						a.mermaidPreviewControls(c, editBox, el, doc)
 					})
 				})
 			})
@@ -151,6 +165,18 @@ func (a *app) editorView(c *ui.Context) {
 			}
 		})
 		a.editorFooter(c)
+	})
+}
+
+// webEditorView is the document page drawn by the web view. The page's
+// own header holds its title and actions; the web view fills the rest.
+func (a *app) webEditorView(c *ui.Context) {
+	doc := a.doc
+	ui.Column(c).Fill().Children(func() {
+		a.docTopBar(c, doc)
+		ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
+			ui.WebView(c, a.webView).Grow(1)
+		})
 	})
 }
 

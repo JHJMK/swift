@@ -50,11 +50,17 @@ func (a *app) docTopBar(c *ui.Context, doc *docState) {
 		outline := a.chromeIconButton(c, iconList, "大纲", a.outlineOpen)
 		if outline.Clicked() {
 			a.outlineOpen = !a.outlineOpen
+			if a.isWebDoc() {
+				a.sendWebCommand("outline", a.outlineOpen)
+			}
 			a.update()
 		}
 		width := a.chromeIconButton(c, iconWidth, "宽窄模式", a.narrowMode)
 		if width.Clicked() {
 			a.narrowMode = !a.narrowMode
+			if a.isWebDoc() {
+				a.sendWebSettings()
+			}
 			a.update()
 		}
 		rename := a.chromeIconButton(c, iconPencil, "重命名", false)
@@ -110,7 +116,7 @@ func (a *app) docTopBar(c *ui.Context, doc *docState) {
 // chromeIconButton is one bare icon of the page chrome.
 func (a *app) chromeIconButton(c *ui.Context, icon *ui.SVG, tip string, on bool) ui.Element {
 	t := c.Theme()
-	b := ui.ButtonBase(c).Tooltip(tip).Width(30).Height(30).Radius(6).
+	b := ui.ButtonBase(c).Tooltip(tip).Label(tip).Width(30).Height(30).Radius(6).
 		Justify(ui.Center).AlignItems(ui.Center)
 	if on {
 		b.Background(t.Accent.Alpha(0.12))
@@ -240,6 +246,9 @@ func (a *app) savePageSettings(doc *docState) {
 	if err := saveConfig(a.cfg); err != nil {
 		a.setError(err)
 	}
+	if a.isWebDoc() {
+		a.sendWebSettings()
+	}
 }
 
 // editorToolbar is the compact icon toolbar above the page.
@@ -256,7 +265,7 @@ func (a *app) editorToolbar(c *ui.Context, doc *docState) {
 		return b
 	}
 	textBtn := func(label, tip string, on bool, st func(ui.Element) ui.Element, run func()) ui.Element {
-		b := ui.ButtonBase(c).Tooltip(tip).Width(30).Height(30).Radius(6).
+		b := ui.ButtonBase(c).Tooltip(tip).Label(tip).Width(30).Height(30).Radius(6).
 			Justify(ui.Center).AlignItems(ui.Center)
 		if on {
 			b.Background(t.Accent.Alpha(0.12))
@@ -468,7 +477,7 @@ func (a *app) insertCommands(doc *docState, close func()) []insertCommand {
 		{Label: "任务列表", Hint: "可勾选的事项", Enabled: true, Run: func() { apply(func() { doc.Doc.ToggleList(richtext.Tasks) }) }},
 		{Label: "引用", Hint: "引用一段话", Enabled: true, Run: func() { apply(func() { doc.Doc.ToggleQuote() }) }},
 		{Label: "代码块", Hint: "Enter 换行，⌘Enter 退出", Enabled: true, Run: func() { apply(func() { doc.Doc.ToggleCodeBlock() }) }},
-		{Label: "Mermaid 图表", Hint: "代码块中绘制流程图", Enabled: true, Run: func() {
+		{Label: "Mermaid 图表", Hint: "兼容导入的旧文档", Enabled: true, Run: func() {
 			apply(func() {
 				doc.Doc.FormatParagraphs(func(p *richtext.ParagraphStyle) {
 					p.CodeBlock, p.Language = true, "mermaid"
@@ -477,9 +486,6 @@ func (a *app) insertCommands(doc *docState, close func()) []insertCommand {
 		}},
 		{Label: "图片", Hint: "从文件插入图片", Icon: iconDownload, Enabled: true, Run: func() { a.insertImage() }},
 		{Label: "附件", Hint: "从文件插入附件", Group: "基础", Icon: iconFile, Enabled: true, Run: func() { a.insertAttachment() }},
-		{Label: "画板", Hint: "插入图形和连线", Group: "绘图", Icon: iconBoard, Enabled: true, Run: func() { a.insertBoard() }},
-		{Label: "流程图", Hint: "用于绘制流程", Group: "绘图", Icon: iconFlow, Enabled: true, Run: func() { a.insertFlowchart() }},
-		{Label: "思维导图", Hint: "用于梳理信息和头脑风暴", Group: "绘图", Icon: iconMind, Enabled: true, Run: func() { a.insertMindmap() }},
 		{Label: "链接", Hint: "给选中的文字加链接", Icon: iconLink, Enabled: true, Run: func() { a.askLink() }},
 		{Label: "行内代码", Hint: "等宽显示一小段代码", Enabled: true, Run: func() { apply(func() { doc.Doc.ToggleCode() }) }},
 		{Label: "表格", Hint: "需要扩展表格块，下一阶段支持", Enabled: false},
@@ -493,10 +499,30 @@ func (a *app) insertCommands(doc *docState, close func()) []insertCommand {
 func (a *app) slashCommands(doc *docState, close func()) []insertCommand {
 	return []insertCommand{
 		{Label: "附件", Hint: "从文件插入附件", Group: "基础", Icon: iconFile, Enabled: true, Run: func() { a.insertAttachment() }},
-		{Label: "画板", Hint: "插入图形、连线和便签", Group: "绘图", Icon: iconBoard, Enabled: true, Run: func() { a.insertBoard() }},
-		{Label: "流程图", Hint: "用于绘制流程", Group: "绘图", Icon: iconFlow, Enabled: true, Run: func() { a.insertFlowchart() }},
-		{Label: "思维导图", Hint: "用于梳理信息和头脑风暴", Group: "绘图", Icon: iconMind, Enabled: true, Run: func() { a.insertMindmap() }},
+		{Label: "Mermaid 图表", Hint: "把当前段落变成 Mermaid 代码块", Group: "绘图", Enabled: true, Run: func() {
+			doc.Doc.FormatParagraphs(func(p *richtext.ParagraphStyle) {
+				p.CodeBlock, p.Language = true, "mermaid"
+			})
+			a.markDocDirty()
+			a.update()
+		}},
 	}
+}
+
+// openInsertMenu shows the block menu from the menu bar or a shortcut.
+func (a *app) openInsertMenu() {
+	if a.doc == nil || a.doc.ReadOnly {
+		return
+	}
+	if a.isWebDoc() {
+		a.sendWebCommand("slash", false)
+		return
+	}
+	a.insertMenuOpen = true
+	a.insertSlash = false
+	a.insertQuery = ""
+	a.insertFocus = true
+	a.update()
 }
 
 // maybeSlashMenu opens the insert palette when a slash begins a paragraph.
@@ -519,8 +545,17 @@ func (a *app) maybeSlashMenu() bool {
 	for i > 0 && runes[i-1] != '\n' {
 		i--
 	}
-	if start-i != 1 {
-		return false
+	// The menu opens at the start of a paragraph, and after text since
+	// the last line break too: a slash after a URL's colon or another
+	// slash is just a slash.
+	if start-i > 1 {
+		switch runes[start-2] {
+		case ':', '/', '\\':
+			return false
+		}
+		if strings.Contains(string(runes[i:start-1]), "://") {
+			return false
+		}
 	}
 	attrs := a.doc.Doc.TypingAttributes()
 	a.doc.Doc.Edit(func(e *richtext.Edit) {

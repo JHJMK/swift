@@ -414,6 +414,18 @@ func normalizeNewlines(s string) string {
 	return strings.NewReplacer("\r\n", "\n", "\r", "\n", " ", "\n").Replace(s)
 }
 
+// DeleteCodeBlockByID deletes the block of code with id, with all its
+// lines. It is the header's delete control, and undoes as the other edits
+// do.
+func (d *Document) DeleteCodeBlockByID(id int) {
+	d.lock()
+	defer d.mu.Unlock()
+	start, _, ok := d.codeBlockSpan(id)
+	if ok {
+		d.deleteCodeBlockAt(start)
+	}
+}
+
 // DeleteCodeBlock deletes the block of code at the caret, with all of its
 // lines, keeping the surrounding paragraphs.
 func (d *Document) DeleteCodeBlock() {
@@ -429,30 +441,45 @@ func (d *Document) DeleteCodeBlockAt(pos int) {
 	d.deleteCodeBlockAt(pos)
 }
 
+// DeleteCodeBlockAtIndex deletes the block of code whose paragraph is
+// index.
+func (d *Document) DeleteCodeBlockAtIndex(index int) {
+	d.lock()
+	defer d.mu.Unlock()
+	d.deleteCodeBlockParagraph(index)
+}
+
 // deleteCodeBlockAt deletes the block of code at pos; the caller holds the
 // lock.
 func (d *Document) deleteCodeBlockAt(pos int) bool {
-	st := d.text.ParagraphStyleAt(pos)
+	return d.deleteCodeBlockParagraph(d.text.paraAt(pos))
+}
+
+// deleteCodeBlockParagraph deletes the block of code of paragraph p; the
+// caller holds the lock. It works from the paragraph itself, not from a
+// rune position: the start of an empty block is also the end of the
+// paragraph above it, where a rune lookup would find that block.
+func (d *Document) deleteCodeBlockParagraph(p int) bool {
+	if p < 0 || p >= d.text.ParagraphCount() {
+		return false
+	}
+	st := seqAt(d.text.seq(), p).style
 	if !st.CodeBlock {
 		return false
 	}
 	d.blockFocus = 0
-	p := d.text.paraAt(pos)
 	p0 := p
 	for p0 > 0 {
-		prev := d.text.ParagraphStyleAt(d.text.paraStart(p0 - 1))
+		prev := seqAt(d.text.seq(), p0-1).style
 		if !prev.CodeBlock || prev.CodeBlockID != st.CodeBlockID {
 			break
 		}
 		p0--
 	}
-	count := 0
-	for range d.text.Paragraphs() {
-		count++
-	}
+	count := d.text.ParagraphCount()
 	p1 := p
 	for p1+1 < count {
-		next := d.text.ParagraphStyleAt(d.text.paraStart(p1 + 1))
+		next := seqAt(d.text.seq(), p1+1).style
 		if !next.CodeBlock || next.CodeBlockID != st.CodeBlockID {
 			break
 		}

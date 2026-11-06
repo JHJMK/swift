@@ -13,6 +13,9 @@ func Run() {
 	// light too, as its pages are.
 	mygo.Theme.SetSource(mygo.ThemeLight)
 	a := newApp()
+	// The document page is an embedded web page; its scheme and methods
+	// must be in place before the window exists.
+	a.setupWebSupport()
 	mygo.App.WhenReady(func() {
 		a.pasteItem = &mygo.MenuItem{
 			Label:       "粘贴",
@@ -82,6 +85,9 @@ func Run() {
 				}},
 			}},
 			{Label: "插入", Submenu: []*mygo.MenuItem{
+				{Label: "插入块…", Accelerator: "CmdOrCtrl+/", Click: func(*mygo.MenuItem, *mygo.Window) {
+					a.openInsertMenu()
+				}},
 				{Label: "附件…", Accelerator: "CmdOrCtrl+Shift+A", Click: func(*mygo.MenuItem, *mygo.Window) {
 					a.insertAttachment()
 				}},
@@ -107,6 +113,7 @@ func Run() {
 			BackgroundColor: "#ffffff",
 			Content:         ui.View(a.view),
 		})
+		a.setupEditorWebView()
 		a.win.OnClose(func(*mygo.CloseEvent) {
 			a.quitting = true
 			a.flushTitle()

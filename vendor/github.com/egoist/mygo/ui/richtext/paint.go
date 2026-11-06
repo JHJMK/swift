@@ -25,6 +25,9 @@ func (v *view) paint(p *ui.Painter, r ui.Rect) {
 	a, z := v.selection()
 	focused := v.focused
 	for i := v.first; i <= v.last && i < len(v.paras); i++ {
+		if v.hiddenParagraph(i) {
+			continue
+		}
 		pv := v.paraLayout(i)
 		st := v.para(i).style
 		top := oy + float32(v.hs.top(i)-v.scroll)

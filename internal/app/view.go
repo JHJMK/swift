@@ -12,6 +12,13 @@ type dragItem struct {
 }
 
 func (a *app) view(c *ui.Context) {
+	if a.mermaidRefresh && !a.isWebDoc() {
+		a.mermaidRefresh = false
+		a.reloadForMermaid()
+	}
+	if a.doc != nil && !a.isWebDoc() {
+		a.syncMermaidVisibility()
+	}
 	a.applyTheme(c)
 	if result := a.syncNote.takeResult(); result != nil {
 		a.syncResult = result
@@ -25,6 +32,7 @@ func (a *app) view(c *ui.Context) {
 		a.onboarding(c)
 	} else {
 		a.maybeSave()
+		a.syncWebIdentity()
 		a.mainView(c)
 	}
 	if a.doc == nil {
@@ -100,9 +108,15 @@ func (a *app) onboarding(c *ui.Context) {
 
 func (a *app) mainView(c *ui.Context) {
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
-		a.globalSidebar(c)
-		if kb := a.contextKB(); kb != nil {
-			a.kbPanel(c, kb)
+		if !a.treeCollapsed {
+			if a.sidebarCollapsed {
+				a.sidebarRail(c)
+			} else {
+				a.globalSidebar(c)
+			}
+			if kb := a.contextKB(); kb != nil {
+				a.kbPanel(c, kb)
+			}
 		}
 		ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 			a.errorBanner(c)
@@ -115,6 +129,9 @@ func (a *app) mainView(c *ui.Context) {
 				a.homeView(c)
 			}
 		})
+		if a.treeCollapsed {
+			a.treeExpandButton(c)
+		}
 	})
 }
 
@@ -206,14 +223,20 @@ func (a *app) errorBanner(c *ui.Context) {
 func (a *app) globalSidebar(c *ui.Context) {
 	t := c.Theme()
 	bar := c.TitleBar()
-	ui.Column(c).Width(232).Shrink(0).Background(ui.Hex(sidebarBg)).
+	ui.Column(c).Width(200).Shrink(0).Background(ui.Hex(sidebarBg)).
 		BorderWidth(0, 1, 0, 0).BorderColor(ui.Hex("#eff0f0")).Children(func() {
 		// The traffic lights sit over the top of the sidebar, and the band
 		// under them moves the window when dragged.
 		ui.Row(c).Height(bar.Height).DragWindow()
 		ui.Row(c).Padding(2, 16, 8, 16).Gap(9).AlignItems(ui.Center).DragWindow().Children(func() {
 			brandLogo(c, 30, 8)
-			ui.Text(c, "语燕").FontSize(18).Bold()
+			ui.Text(c, "语燕").FontSize(18).Bold().Grow(1)
+			collapse := a.chromeIconButton(c, iconChevronLeft, "收起侧栏", false)
+			if collapse.Clicked() {
+				a.sidebarCollapsed = true
+				a.kbRailOpen = false
+				a.update()
+			}
 		})
 
 		ui.Row(c).Padding(0, 12).Children(func() {
@@ -388,10 +411,16 @@ func (a *app) globalSidebar(c *ui.Context) {
 // kbPanel is the knowledge base's own column: its tree and home.
 func (a *app) kbPanel(c *ui.Context, kb *Node) {
 	t := c.Theme()
-	ui.Column(c).Width(240).Shrink(0).Background(t.Surface).
+	ui.Column(c).Width(220).Shrink(0).Background(t.Surface).
 		BorderWidth(0, 1, 0, 0).BorderColor(t.Border).Children(func() {
 		ui.Row(c).Padding(topInset+12, 12, 12, 12).Gap(4).AlignItems(ui.Center).DragWindow().Children(func() {
 			ui.Text(c, kb.Title()).FontSize(16).Bold().SingleLine().Grow(1)
+			collapse := a.chromeIconButton(c, iconChevronLeft, "收起目录", false)
+			if collapse.Clicked() {
+				a.treeCollapsed = true
+				a.kbRailOpen = false
+				a.update()
+			}
 			add := ui.ButtonBase(c).Label("新建").Tooltip("新建").Width(28).Height(28).
 				Radius(6).Justify(ui.Center).AlignItems(ui.Center)
 			if a.kbMenuOpen || add.Hovered() {

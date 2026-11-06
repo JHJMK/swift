@@ -99,3 +99,54 @@ func TestMermaidInstallHint(t *testing.T) {
 		t.Fatalf("no install hint: %q", tt.Texts())
 	}
 }
+
+// A Mermaid block shows its picture while the caret is elsewhere, and its
+// source after the picture's edit button is pressed.
+func TestMermaidPreviewTogglesSource(t *testing.T) {
+	cli := mermaidCLI()
+	if cli == "" {
+		t.Skip("mmdc is not installed")
+	}
+	if _, ok := renderMermaidPNG(cli, "graph TD\n  A --> B"); !ok {
+		t.Skip("mmdc is installed but cannot render")
+	}
+	a, _, rel := newTestApp(t)
+	if _, err := a.vault.WriteDoc(rel, "# 图\n\n```mermaid\ngraph TD\n  A[开始] --> B[结束]\n```\n\n后文\n"); err != nil {
+		t.Fatal(err)
+	}
+	a.openDoc(rel)
+	tt := ui.NewTester(a.view, 1180, 760)
+	tt.Frame()
+	var id int
+	var url string
+	for _, p := range a.doc.Doc.Text().Paragraphs() {
+		if p.Style.CodeBlock && p.Style.Language == "mermaid" {
+			id = p.Style.CodeBlockID
+		}
+	}
+	for u := range a.doc.mermaidPreviews {
+		url = u
+	}
+	if id == 0 || url == "" {
+		t.Fatalf("no Mermaid block or preview: id=%d previews=%v", id, a.doc.mermaidPreviews)
+	}
+	if !a.doc.Doc.CodeBlockHidden(id) || a.doc.Doc.PreviewHidden(url) {
+		t.Fatal("the block should start as a rendered picture")
+	}
+	tt.Move(800, 300)
+	tt.Frame()
+	rect, ok := tt.Find("编辑 Mermaid")
+	if !ok {
+		t.Fatalf("no edit button on the picture: %q", tt.Texts())
+	}
+	tt.ClickAt(rect.X+rect.W/2, rect.Y+rect.H/2)
+	tt.Frame()
+	if a.doc.Doc.CodeBlockHidden(id) || !a.doc.Doc.PreviewHidden(url) {
+		t.Fatal("the source did not replace the picture")
+	}
+	a.doc.Doc.SetSelection(0, 0)
+	tt.Frame()
+	if !a.doc.Doc.CodeBlockHidden(id) {
+		t.Fatal("the source did not fold back into the picture")
+	}
+}
