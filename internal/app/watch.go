@@ -239,6 +239,7 @@ func (a *app) applyKBSnapshot(w *kbWatch) {
 		return
 	}
 	doc := a.doc
+	selected := a.selected
 	if doc != nil && !relWithin(doc.Rel, w.rel) {
 		doc = nil
 	}
@@ -252,6 +253,9 @@ func (a *app) applyKBSnapshot(w *kbWatch) {
 			a.reloadIfChanged(doc, md, mtime)
 		}
 	}
+	if a.selected == "" && selected != "" {
+		a.selectAfterRemoval(selected, w.rel)
+	}
 	a.update()
 }
 
@@ -264,6 +268,7 @@ func (a *app) applyKBEvents(w *kbWatch, events []mygo.FileEvent) {
 	if doc != nil && !relWithin(doc.Rel, w.rel) {
 		doc = nil
 	}
+	selected := a.selected
 
 	structural := false
 	touched := false
@@ -282,6 +287,13 @@ func (a *app) applyKBEvents(w *kbWatch, events []mygo.FileEvent) {
 					a.adoptExternalMove(doc, newDocRel, oldRel, event.IsDir)
 					doc = a.doc
 					touched = true
+				}
+			}
+			if selected != "" && event.OldPath != "" && event.Path != "" {
+				oldRel := kbPath(w.rel, event.OldPath)
+				if relWithin(selected, oldRel) {
+					selected = kbPath(w.rel, event.Path) + strings.TrimPrefix(selected, oldRel)
+					a.selected = selected
 				}
 			}
 			if event.IsDir || isMarkdown(path.Base(event.Path)) {
@@ -335,6 +347,9 @@ func (a *app) applyKBEvents(w *kbWatch, events []mygo.FileEvent) {
 		if doc != nil && a.doc == doc && a.findNode(doc.Rel) == nil {
 			a.handleOpenDocDeleted(w, doc)
 			return
+		}
+		if a.selected == "" && selected != "" {
+			a.selectAfterRemoval(selected, w.rel)
 		}
 	}
 
@@ -471,12 +486,10 @@ func (a *app) handleOpenDocDeleted(w *kbWatch, doc *docState) {
 		a.update()
 		return
 	}
+	deletedRel := doc.Rel
 	a.doc = nil
 	a.refreshTree()
-	if a.findNode(w.rel) != nil {
-		a.selected = w.rel
-		a.selectedIsDir = true
-	} else {
+	if !a.selectAfterRemoval(deletedRel, w.rel) {
 		a.selected = ""
 		a.selectedIsDir = false
 	}

@@ -188,3 +188,89 @@ func TestKBSnapshotRefreshesTreeAndDocument(t *testing.T) {
 		t.Fatalf("document not reloaded: %q", a.doc.Doc.Text().PlainText())
 	}
 }
+
+// Deleting a folder in the tree lands on its parent instead of the
+// workbench.
+func TestDeleteFolderKeepsParent(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	folder, err := a.vault.CreateFolder("我的知识库", "新目录")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.refreshTree()
+	a.selected = folder
+	a.selectedIsDir = true
+	a.askDelete(folder)
+	if a.confirm == nil {
+		t.Fatal("no delete confirmation")
+	}
+	a.confirm.OnOK()
+	if a.selected != "我的知识库" || !a.selectedIsDir {
+		t.Fatalf("selection %q dir=%v", a.selected, a.selectedIsDir)
+	}
+	if a.findNode(folder) != nil {
+		t.Fatal("deleted folder still in tree")
+	}
+}
+
+// Deleting the open document also leaves its knowledge base open.
+func TestDeleteDocumentKeepsParent(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	a.openDoc(rel)
+	a.askDelete(rel)
+	if a.confirm == nil {
+		t.Fatal("no delete confirmation")
+	}
+	a.confirm.OnOK()
+	if a.doc != nil {
+		t.Fatal("document still open")
+	}
+	if a.selected != "我的知识库" || !a.selectedIsDir {
+		t.Fatalf("selection %q dir=%v", a.selected, a.selectedIsDir)
+	}
+}
+
+// A folder removed outside the app selects its parent too.
+func TestExternalFolderDeleteKeepsParent(t *testing.T) {
+	a, root, _ := newTestApp(t)
+	folder, err := a.vault.CreateFolder("我的知识库", "新目录")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.refreshTree()
+	a.selected = folder
+	a.selectedIsDir = true
+	if err := os.Remove(filepath.Join(root, filepath.FromSlash(folder))); err != nil {
+		t.Fatal(err)
+	}
+	a.applyKBEvents(&kbWatch{rel: "我的知识库"}, []mygo.FileEvent{{
+		Op: mygo.FileRemove, Path: "新目录", IsDir: true,
+	}})
+	if a.selected != "我的知识库" || !a.selectedIsDir {
+		t.Fatalf("selection %q dir=%v", a.selected, a.selectedIsDir)
+	}
+}
+
+// A folder renamed outside the app stays selected under its new name.
+func TestExternalFolderRenameKeepsSelection(t *testing.T) {
+	a, root, _ := newTestApp(t)
+	folder, err := a.vault.CreateFolder("我的知识库", "旧目录")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.refreshTree()
+	a.selected = folder
+	a.selectedIsDir = true
+	if err := os.Rename(filepath.Join(root, filepath.FromSlash(folder)), filepath.Join(root, "我的知识库", "新目录")); err != nil {
+		t.Fatal(err)
+	}
+	a.applyKBEvents(&kbWatch{rel: "我的知识库"}, []mygo.FileEvent{{
+		Op: mygo.FileRename, OldPath: "旧目录", Path: "新目录", IsDir: true,
+	}})
+	if a.selected != "我的知识库/新目录" || !a.selectedIsDir {
+		t.Fatalf("selection %q dir=%v", a.selected, a.selectedIsDir)
+	}
+	if a.findNode(a.selected) == nil {
+		t.Fatal("renamed folder missing from tree")
+	}
+}

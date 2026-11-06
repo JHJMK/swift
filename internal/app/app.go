@@ -1010,19 +1010,56 @@ func (a *app) askDelete(rel string) {
 		OKLabel:   "删除",
 		Dangerous: true,
 		OnOK: func() {
-			if a.doc != nil && (a.doc.Rel == rel || strings.HasPrefix(a.doc.Rel, rel+"/")) {
-				a.doc = nil
-			}
-			if a.selected == rel || strings.HasPrefix(a.selected, rel+"/") {
-				a.selected = ""
-			}
+			docAffected := a.doc != nil && relWithin(a.doc.Rel, rel)
+			selectedAffected := a.selected != "" && relWithin(a.selected, rel)
 			if err := a.vault.Trash(rel); err != nil {
 				a.setError(err)
 				return
 			}
+			if docAffected {
+				a.doc = nil
+			}
 			a.refreshTree()
+			if selectedAffected && !a.selectAfterRemoval(rel, strings.Split(rel, "/")[0]) {
+				a.selected = ""
+				a.selectedIsDir = false
+			}
+			a.update()
 		},
 	}
+}
+
+// selectAfterRemoval picks the nearest parent that still exists after rel
+// went to the trash, so deleting a folder keeps its knowledge base open
+// rather than falling back to the workbench.
+func (a *app) selectAfterRemoval(rel, fallback string) bool {
+	for parent := parentRel(rel); parent != ""; parent = parentRel(parent) {
+		n := a.findNode(parent)
+		if n == nil {
+			continue
+		}
+		if n.IsDir {
+			a.doc = nil
+			a.selected = n.Rel
+			a.selectedIsDir = true
+			return true
+		}
+		a.openDoc(n.Rel)
+		return true
+	}
+	if fallback != "" {
+		if n := a.findNode(fallback); n != nil {
+			if n.IsDir {
+				a.doc = nil
+				a.selected = n.Rel
+				a.selectedIsDir = true
+				return true
+			}
+			a.openDoc(n.Rel)
+			return true
+		}
+	}
+	return false
 }
 
 func (a *app) dropNode(dragged, target *Node) {
