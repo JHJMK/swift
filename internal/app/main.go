@@ -116,6 +116,7 @@ func Run() {
 		a.setupEditorWebView()
 		a.win.OnClose(func(*mygo.CloseEvent) {
 			a.quitting = true
+			a.stopKBWatch()
 			a.flushTitle()
 			a.flushDoc()
 			a.flushSync()

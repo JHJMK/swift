@@ -51,6 +51,7 @@ import type {
   MyGoBridge,
   OpenPayload,
   OutlineHeading,
+  ReloadPayload,
   RenameResult,
   SettingsPayload,
   StatusPayload,
@@ -63,6 +64,7 @@ const EVENT_SETTINGS = "web-editor:settings";
 const EVENT_COMMAND = "web-editor:command";
 const EVENT_INSERT = "web-editor:insert-text";
 const EVENT_TITLE = "web-editor:title";
+const EVENT_RELOAD = "web-editor:reload";
 
 const SERVICE = "SwiftEditor";
 
@@ -598,6 +600,34 @@ function revealPosition(pos: number) {
       els.scroller.scrollTop += coords.bottom - (rect.bottom - margin);
     }
   });
+}
+
+/** reloadDocument replaces the page's text after an external edit. */
+function reloadDocument(payload: ReloadPayload) {
+  if (!current || payload.id !== docId || loading) return;
+  const selection = view.state.selection.main;
+  const anchor = Math.min(selection.anchor, payload.content.length);
+  const head = Math.min(selection.head, payload.content.length);
+  const scrollTop = els.scroller.scrollTop;
+  const hadFocus = view.hasFocus;
+  loading = true;
+  dirty = false;
+  closeSlash();
+  closeBlockMenu();
+  currentMarkdown = payload.content;
+  if (current) current.content = payload.content;
+  view.setState(makeEditorState(payload.content));
+  setReadOnly(readOnly);
+  view.dispatch({ selection: { anchor, head } });
+  loading = false;
+  if (hadFocus) view.focus();
+  els.scroller.scrollTop = scrollTop;
+  updateCount();
+  renderOutline();
+  refreshToolbar();
+  scheduleMermaid();
+  setStatus("已保存", "saved");
+  toast("已从磁盘更新");
 }
 
 function insertText(text: string, opts: { block?: boolean; atCursor?: boolean } = {}) {
@@ -1543,6 +1573,9 @@ bridge.on(EVENT_TITLE, (payload) => {
     if (current) current.id = meta.id;
   }
   setTitle(meta.title);
+});
+bridge.on(EVENT_RELOAD, (payload) => {
+  reloadDocument(payload as ReloadPayload);
 });
 
 function timeNow(): string {

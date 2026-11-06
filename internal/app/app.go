@@ -58,6 +58,12 @@ type docState struct {
 	// mermaidPreviews are the rendered diagrams shown above their source;
 	// they are left out of the Markdown written.
 	mermaidPreviews map[string]bool
+
+	// externalConflict and externalDeleted remember that the file on disk
+	// was changed or removed while the page had unsaved edits, so the
+	// notice shows once and saving resolves it.
+	externalConflict bool
+	externalDeleted  bool
 }
 
 // promptState asks for one line of text.
@@ -201,6 +207,9 @@ type app struct {
 	webFailed bool
 	webSentID string
 	editorWeb bool
+
+	// kbWatch follows the open knowledge base's folder on disk.
+	kbWatch *kbWatch
 }
 
 func newApp() *app {
@@ -412,6 +421,8 @@ func (a *app) flushDoc() {
 		doc.Saved = md
 		doc.MTime = time.Now()
 		doc.Dirty = false
+		doc.externalConflict = false
+		doc.externalDeleted = false
 		if doc.Web {
 			a.sendWebStatus("saved", "已保存")
 		}
@@ -431,6 +442,8 @@ func (a *app) flushDoc() {
 	doc.Saved = md
 	doc.MTime = mtime
 	doc.Dirty = false
+	doc.externalConflict = false
+	doc.externalDeleted = false
 	if doc.Web {
 		a.sendWebStatus("saved", "已保存")
 	}

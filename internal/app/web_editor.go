@@ -52,6 +52,12 @@ type webEditorInsert struct {
 	Text string `json:"text"`
 }
 
+type webEditorReload struct {
+	ID      string `json:"id"`
+	Content string `json:"content"`
+	SavedAt string `json:"savedAt"`
+}
+
 type webEditorTitle struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
@@ -73,6 +79,7 @@ var (
 	webEditorCommandEvent  = mygo.NewEvent[webEditorCommand]("web-editor:command")
 	webEditorInsertEvent   = mygo.NewEvent[webEditorInsert]("web-editor:insert-text")
 	webEditorTitleEvent    = mygo.NewEvent[webEditorTitle]("web-editor:title")
+	webEditorReloadEvent   = mygo.NewEvent[webEditorReload]("web-editor:reload")
 )
 
 // webEditorService is the Go side the page calls.
@@ -263,6 +270,17 @@ func (a *app) sendWebCommand(command string, open bool) {
 		return
 	}
 	_ = webEditorCommandEvent.EmitPage(a.webView.Page(), webEditorCommand{Command: command, Open: open})
+}
+
+func (a *app) sendWebReload(doc *docState, markdown string, mtime time.Time) {
+	if a.webView == nil || doc == nil || doc != a.doc {
+		return
+	}
+	_ = webEditorReloadEvent.EmitPage(a.webView.Page(), webEditorReload{
+		ID:      a.docKey(),
+		Content: markdown,
+		SavedAt: mtime.Format("15:04:05"),
+	})
 }
 
 func (a *app) sendWebInsert(text string) {

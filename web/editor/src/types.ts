@@ -39,6 +39,12 @@ export interface CommandPayload {
   message?: string;
 }
 
+export interface ReloadPayload {
+  id: string;
+  content: string;
+  savedAt: string;
+}
+
 export interface RenamePayload {
   id: string;
   title: string;

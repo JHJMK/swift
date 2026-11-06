@@ -32,6 +32,7 @@ func (a *app) view(c *ui.Context) {
 		a.onboarding(c)
 	} else {
 		a.maybeSave()
+		a.syncKBWatch()
 		a.syncWebIdentity()
 		a.mainView(c)
 	}
