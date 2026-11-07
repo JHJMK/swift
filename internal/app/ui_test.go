@@ -196,6 +196,62 @@ func TestKnowledgeBaseMenu(t *testing.T) {
 	}
 }
 
+func TestUnifiedImportMenus(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	tt := ui.NewTester(a.view, 1180, 760)
+	importItems := []string{"复制导入知识库", "引用外部知识库", "导入语雀 Lakebook"}
+
+	if err := tt.Click("新建或导入知识库"); err != nil {
+		t.Fatal(err)
+	}
+	if !a.kbAddMenuOpen || a.kbImportMenuOpen {
+		t.Fatalf("sidebar menu state = %v %v", a.kbAddMenuOpen, a.kbImportMenuOpen)
+	}
+	if !tt.HasText("新建知识库") || !tt.HasText("导入") {
+		t.Fatalf("sidebar menu lacks its top-level actions: %q", tt.Texts())
+	}
+	for _, item := range importItems {
+		if tt.HasText(item) {
+			t.Fatalf("sidebar top-level menu already shows %q", item)
+		}
+	}
+
+	if err := tt.Click("导入"); err != nil {
+		t.Fatal(err)
+	}
+	if a.kbAddMenuOpen || !a.kbImportMenuOpen {
+		t.Fatalf("sidebar import menu state = %v %v", a.kbAddMenuOpen, a.kbImportMenuOpen)
+	}
+	assertLabelsOnce(t, tt.Texts(), importItems)
+
+	tt.ClickAt(900, 500)
+	if a.kbImportMenuOpen {
+		t.Fatal("sidebar import menu stayed open after a press outside")
+	}
+	if err := tt.Click("导入知识库"); err != nil {
+		t.Fatal(err)
+	}
+	if !a.importMenuOpen {
+		t.Fatal("workbench import menu did not open")
+	}
+	assertLabelsOnce(t, tt.Texts(), importItems)
+}
+
+func assertLabelsOnce(t *testing.T, texts, labels []string) {
+	t.Helper()
+	for _, label := range labels {
+		count := 0
+		for _, text := range texts {
+			if text == label {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("%q appears %d times: %q", label, count, texts)
+		}
+	}
+}
+
 // Renaming the knowledge base of the open document keeps it open, saves
 // its edits first, and leaves no copy behind under the old name.
 func TestRenameSavesBeforeMoving(t *testing.T) {
@@ -357,7 +413,7 @@ func TestDocumentRowMenu(t *testing.T) {
 }
 
 // A folder's row menu offers no document-only actions, and its add menu
-// creates a document, a group or imports a Markdown file.
+// creates a document, a group or imports a file.
 func TestFolderRowMenu(t *testing.T) {
 	a, _, _ := newTestApp(t)
 	folder, err := a.vault.CreateFolder("我的知识库", "目录甲")

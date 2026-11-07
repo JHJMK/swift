@@ -134,18 +134,19 @@ type app struct {
 
 	// The dropdown menus drawn in the window: the knowledge base's plus,
 	// the folder's More and the editor's Export.
-	kbMenuOpen     bool
-	moreMenuOpen   bool
-	kbAddMenuOpen  bool
-	importMenuOpen bool
-	outlineOpen    bool
-	insertMenuOpen bool
-	insertSlash    bool
-	insertQuery    string
-	caretX, caretY float32
-	insertFocus    bool
-	blockMenuOpen  bool
-	docMoreOpen    bool
+	kbMenuOpen       bool
+	moreMenuOpen     bool
+	kbAddMenuOpen    bool
+	kbImportMenuOpen bool
+	importMenuOpen   bool
+	outlineOpen      bool
+	insertMenuOpen   bool
+	insertSlash      bool
+	insertQuery      string
+	caretX, caretY   float32
+	insertFocus      bool
+	blockMenuOpen    bool
+	docMoreOpen      bool
 	// rowMenu is the node whose tree row menu shows, by its path, and
 	// rowPlus the node whose add menu shows.
 	rowMenu string
@@ -172,11 +173,12 @@ type app struct {
 
 	// focusBody puts the caret at the start of the text after a title is
 	// entered.
-	focusBody  bool
-	focusTitle bool
-	toast      string
-	toastUntil time.Time
-	narrowMode bool
+	focusBody   bool
+	focusTitle  bool
+	toast       string
+	toastUntil  time.Time
+	lakebookJob *lakebookImportJob
+	narrowMode  bool
 
 	pending   func()
 	deferred  func()
@@ -1187,17 +1189,21 @@ func (a *app) moveNode(rel, newParentRel, beforeName string) {
 	a.refreshTree()
 }
 
-// importMarkdown asks for a Markdown file and imports it under n, which
-// may be a folder or a document.
-func (a *app) importMarkdown(n *Node) {
+// importDocument asks for a document and imports it under n, which may be
+// a folder or a document.
+func (a *app) importDocument(n *Node) {
 	dir, ok := a.childrenDir(n)
 	if !ok {
 		return
 	}
 	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
-		Parent:  a.win,
-		Title:   "导入 Markdown",
-		Filters: []mygo.FileFilter{{Name: "Markdown", Extensions: []string{"md", "markdown", "mdown"}}},
+		Parent: a.win,
+		Title:  "导入文档",
+		Filters: []mygo.FileFilter{
+			{Name: "Markdown", Extensions: []string{"md", "markdown", "mdown"}},
+			{Name: "文本文件", Extensions: []string{"txt"}},
+			{Name: "Word 文档", Extensions: []string{"docx"}},
+		},
 	})
 	if err != nil {
 		a.setError(err)
@@ -1206,7 +1212,7 @@ func (a *app) importMarkdown(n *Node) {
 	if len(paths) == 0 {
 		return
 	}
-	a.importMarkdownFile(dir, paths[0])
+	a.importDocumentFile(dir, paths[0])
 }
 
 // importMarkdownFile imports the Markdown file at srcPath into parentRel,
@@ -1217,21 +1223,9 @@ func (a *app) importMarkdownFile(parentRel, srcPath string) error {
 		a.setError(err)
 		return err
 	}
-	title := strings.TrimSuffix(filepath.Base(srcPath), filepath.Ext(srcPath))
-	rel, err := a.vault.CreateDoc(parentRel, title)
-	if err != nil {
-		a.setError(err)
-		return err
-	}
-	md := a.importMarkdownImages(rel, filepath.Dir(srcPath), string(data))
-	if _, err := a.vault.WriteDoc(rel, md); err != nil {
-		a.setError(err)
-		return err
-	}
-	*a.openState(parentRel) = true
-	a.refreshTree()
-	a.openDoc(rel)
-	return nil
+	return a.writeImportedDocument(parentRel, srcPath, func(rel string) (string, error) {
+		return a.importMarkdownImages(rel, filepath.Dir(srcPath), string(data)), nil
+	})
 }
 
 // importMarkdownImages copies the images a Markdown text refers to, local

@@ -76,6 +76,14 @@ func setupSavePanel(panel id, title, message, button, defaultPath string, filter
 	if len(exts) == 0 {
 		return
 	}
+	var names []id
+	for _, e := range exts {
+		names = append(names, nsString(e))
+	}
+	if respondsTo(panel, "setAllowedFileTypes:") {
+		send(panel, "setAllowedFileTypes:", uintptr(nsArray(names...)))
+		return
+	}
 	if hasClass("UTType") {
 		var types []id
 		for _, e := range exts {
@@ -84,13 +92,7 @@ func setupSavePanel(panel id, title, message, button, defaultPath string, filter
 			}
 		}
 		send(panel, "setAllowedContentTypes:", uintptr(nsArray(types...)))
-		return
 	}
-	var names []id
-	for _, e := range exts {
-		names = append(names, nsString(e))
-	}
-	send(panel, "setAllowedFileTypes:", uintptr(nsArray(names...)))
 }
 
 func (d dialogs) ShowOpenDialog(parent platform.Window, o *platform.OpenDialogOptions, cb func([]string, error)) {

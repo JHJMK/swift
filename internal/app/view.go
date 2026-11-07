@@ -12,6 +12,7 @@ type dragItem struct {
 }
 
 func (a *app) view(c *ui.Context) {
+	a.finishLakebookImport()
 	if a.mermaidRefresh && !a.isWebDoc() {
 		a.mermaidRefresh = false
 		a.reloadForMermaid()
@@ -271,14 +272,19 @@ func (a *app) globalSidebar(c *ui.Context) {
 			ui.Text(c, "知识库").FontSize(12).Bold().TextColor(t.TextMuted).Grow(1)
 			add := ui.ButtonBase(c).Label("新建或导入知识库").Tooltip("新建或导入知识库").
 				Width(22).Height(22).Radius(6).Justify(ui.Center).AlignItems(ui.Center)
-			if a.kbAddMenuOpen || add.Hovered() {
+			if a.kbAddMenuOpen || a.kbImportMenuOpen || add.Hovered() {
 				add.Background(ui.Hex(hoverBg))
 			}
 			add.Children(func() {
 				ui.Icon(c, iconPlus).FontSize(15).TextColor(t.TextMuted)
 			})
 			if add.Clicked() {
-				a.kbAddMenuOpen = !a.kbAddMenuOpen
+				if a.kbAddMenuOpen || a.kbImportMenuOpen {
+					a.kbAddMenuOpen = false
+					a.kbImportMenuOpen = false
+				} else {
+					a.kbAddMenuOpen = true
+				}
 				a.update()
 			}
 			dropdownRight(c, add, &a.kbAddMenuOpen, func() {
@@ -288,21 +294,22 @@ func (a *app) globalSidebar(c *ui.Context) {
 					a.update()
 				})
 				menuSeparator(c)
-				menuItem(c, iconDownload, "复制导入知识库", func() {
+				menuItem(c, iconDownload, "导入", func() {
 					a.kbAddMenuOpen = false
-					a.askImportKnowledgeBaseCopy()
+					a.kbImportMenuOpen = true
 					a.update()
 				})
-				menuItem(c, iconFolder, "引用外部知识库", func() {
-					a.kbAddMenuOpen = false
-					a.askImportExternalKnowledgeBase()
-					a.update()
-				})
+			})
+			dropdownRight(c, add, &a.kbImportMenuOpen, func() {
+				a.importMenuItems(c)
 			})
 		})
 
 		ui.Scroll(c).Grow(1).Children(func() {
 			ui.Column(c).Padding(0, 10).Gap(2).Children(func() {
+				if a.lakebookImportRunning() {
+					a.lakebookImportRow(c)
+				}
 				if len(a.tree) == 0 {
 					ui.Column(c).Padding(6, 10).Gap(6).Children(func() {
 						ui.Text(c, "还没有知识库").FontSize(12).TextColor(t.TextMuted)
@@ -409,6 +416,16 @@ func (a *app) globalSidebar(c *ui.Context) {
 	})
 }
 
+func (a *app) lakebookImportRow(c *ui.Context) {
+	t := c.Theme()
+	ui.Column(c).FillWidth().Height(32).Padding(3, 9).Gap(2).Radius(6).
+		Background(t.Accent.Alpha(0.08)).Border(1, t.Accent.Alpha(0.20)).
+		Children(func() {
+			ui.Text(c, "正在导入语雀 Lakebook…").FontSize(12).SingleLine().TextColor(t.TextMuted)
+			ui.Progress(c, -1).FillWidth().Height(4).Label("Lakebook 导入进度")
+		})
+}
+
 // kbPanel is the knowledge base's own column: its tree and home.
 func (a *app) kbPanel(c *ui.Context, kb *Node) {
 	t := c.Theme()
@@ -446,7 +463,7 @@ func (a *app) kbPanel(c *ui.Context, kb *Node) {
 				})
 				menuItem(c, iconDownload, "导入", func() {
 					a.kbMenuOpen = false
-					a.importMarkdown(kb)
+					a.importDocument(kb)
 					a.update()
 				})
 				if a.clipboard != nil {
@@ -587,7 +604,7 @@ func (a *app) treeRow(c *ui.Context, n *Node, depth int) {
 					})
 					menuItem(c, iconDownload, "导入", func() {
 						a.rowPlus = ""
-						a.importMarkdown(n)
+						a.importDocument(n)
 						a.update()
 					})
 				})
@@ -757,21 +774,12 @@ func (a *app) homeView(c *ui.Context) {
 					actionCard(c, iconFile, "新建文档", "写一篇 Markdown 文档", a.askNewDocAt)
 					actionCard(c, iconBook, "新建知识库", "用知识库整理内容", a.askNewKnowledgeBase)
 					actionCard(c, iconSearch, "搜索文档", "在标题和正文中查找", a.openSearch)
-					importCard := actionCard(c, iconDownload, "导入知识库", "复制或引用文件夹", func() {
+					importCard := actionCard(c, iconDownload, "导入知识库", "复制、引用、Lakebook", func() {
 						a.importMenuOpen = !a.importMenuOpen
 						a.update()
 					})
 					dropdownRight(c, importCard, &a.importMenuOpen, func() {
-						menuItem(c, iconDownload, "复制导入知识库", func() {
-							a.importMenuOpen = false
-							a.askImportKnowledgeBaseCopy()
-							a.update()
-						})
-						menuItem(c, iconFolder, "引用外部知识库", func() {
-							a.importMenuOpen = false
-							a.askImportExternalKnowledgeBase()
-							a.update()
-						})
+						a.importMenuItems(c)
 					})
 				})
 

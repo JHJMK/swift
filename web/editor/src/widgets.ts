@@ -37,9 +37,21 @@ function escapeHtml(s: string): string {
   });
 }
 
+function restoreInlineTags(html: string): string {
+  return html.replace(/&lt;(\/?)(u|strong|b|em|i|del|s|strike|ins)&gt;/gi, (_tag, closing: string, name: string) => {
+    const canonical =
+      name === "b" ? "strong" :
+      name === "i" ? "em" :
+      name === "s" || name === "strike" ? "del" :
+      name === "ins" ? "u" :
+      name;
+    return `<${closing}${canonical}>`;
+  }).replace(/&lt;br\s*\/?&gt;/gi, "<br>");
+}
+
 /** inlineHtml renders the small amount of inline Markdown a table cell uses. */
 export function inlineHtml(text: string): string {
-  let out = escapeHtml(text);
+  let out = restoreInlineTags(escapeHtml(text));
   out = out.replace(/`([^`]+)`/g, "<code>$1</code>");
   out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   out = out.replace(/__([^_]+)__/g, "<strong>$1</strong>");
@@ -50,6 +62,17 @@ export function inlineHtml(text: string): string {
     '<a href="$2" target="_blank" rel="noreferrer">$1</a>',
   );
   return out;
+}
+
+/** LineBreakWidget shows a DOCX line break without exposing its HTML tag. */
+export class LineBreakWidget extends WidgetType {
+  toDOM(): HTMLElement {
+    return el("br", "swift-line-break");
+  }
+
+  ignoreEvent(): boolean {
+    return true;
+  }
 }
 
 /** ListMarkerWidget draws the bullet or number Obsidian shows for a list. */

@@ -34,7 +34,7 @@ func dropdownAt(c *ui.Context, anchor ui.Element, open *bool, at, self ui.Anchor
 	}
 	ui.PopoverBase(c, anchor, open, func(panel ui.Element) {
 		panel.AttachTo(anchor, at, self).Margin(6, 0, 0, 0)
-		panel.Role(ui.RoleMenu).Width(180).Padding(5).Radius(8).Background(ui.Hex(menuBg)).
+		panel.Role(ui.RoleMenu).Width(200).Padding(5).Radius(8).Background(ui.Hex(menuBg)).
 			Border(1, ui.Hex(menuBorder)).Shadow(0, 8, 28, 0, ui.RGBA(0, 0, 0, 0.12))
 		ui.Column(c).FillWidth().Gap(1).Children(body)
 	})
@@ -68,6 +68,27 @@ func menuItemInk(c *ui.Context, icon *ui.SVG, label, ink string, onClick func())
 // menuSeparator divides groups of items.
 func menuSeparator(c *ui.Context) {
 	ui.Box(c).FillWidth().Height(1).Margin(4, 9).Background(ui.Hex(menuLine))
+}
+
+func (a *app) importMenuItems(c *ui.Context) {
+	closeMenu := func() {
+		a.kbAddMenuOpen = false
+		a.kbImportMenuOpen = false
+		a.importMenuOpen = false
+		a.update()
+	}
+	menuItem(c, iconDownload, "复制导入知识库", func() {
+		closeMenu()
+		a.askImportKnowledgeBaseCopy()
+	})
+	menuItem(c, iconFolder, "引用外部知识库", func() {
+		closeMenu()
+		a.askImportExternalKnowledgeBase()
+	})
+	menuItem(c, iconBook, "导入语雀 Lakebook", func() {
+		closeMenu()
+		a.askImportLakebook()
+	})
 }
 
 // menuButton is a button of the theme's look that shows a menu below it
