@@ -472,6 +472,12 @@ button {
   text-decoration: line-through;
 }
 
+.swift-underline {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
 .swift-highlight {
   background: rgba(255, 208, 0, 0.4);
   border-radius: 2px;
@@ -829,6 +835,11 @@ button {
 .swift-table a {
   color: var(--text-accent);
   text-decoration: underline;
+}
+
+.swift-table u {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 /* Embeds ------------------------------------------------------------- */

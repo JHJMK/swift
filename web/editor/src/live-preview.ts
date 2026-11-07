@@ -16,6 +16,7 @@ import {
   CodeFlairWidget,
   HrWidget,
   ImageWidget,
+  LineBreakWidget,
   ListMarkerWidget,
   MermaidWidget,
   TableWidget,
@@ -121,9 +122,10 @@ function build(state: EditorState, options: LivePreviewOptions): PreviewValue {
   };
 
   /** inline decorates emphasis, code, links and images within one line. */
-  const inline = (base: number, text: string, isActive: boolean, fromOffset = 0) => {
+  const inline = (base: number, text: string, isActive: boolean, fromOffset = 0, toOffset = text.length) => {
     let i = fromOffset;
-    const n = text.length;
+    const n = toOffset;
+    const lower = text.toLowerCase();
     while (i < n) {
       const ch = text[i];
       if (ch === "`") {
@@ -194,6 +196,44 @@ function build(state: EditorState, options: LivePreviewOptions): PreviewValue {
         }
       }
       if (ch === "<") {
+        const lineBreak = /^<br\s*\/?>/i.exec(text.slice(i));
+        if (lineBreak) {
+          if (!isActive) {
+            decos.push(
+              Decoration.replace({
+                widget: new LineBreakWidget(),
+              }).range(base + i, base + i + lineBreak[0].length),
+            );
+          } else {
+            style(base + i, base + i + lineBreak[0].length, "swift-formatting");
+          }
+          i += lineBreak[0].length;
+          continue;
+        }
+        const tag = /^<(strong|b|em|i|del|s|strike|u|ins)>/i.exec(text.slice(i));
+        if (tag) {
+          const name = tag[1].toLowerCase();
+          const closeTag = `</${name}>`;
+          const closeAt = lower.indexOf(closeTag, i + tag[0].length);
+          if (closeAt >= i + tag[0].length) {
+            if (!isActive) {
+              hide(base + i, base + i + tag[0].length);
+              hide(base + closeAt, base + closeAt + closeTag.length);
+            } else {
+              style(base + i, base + i + tag[0].length, "swift-formatting");
+              style(base + closeAt, base + closeAt + closeTag.length, "swift-formatting");
+            }
+            const cls =
+              name === "strong" || name === "b" ? "swift-strong" :
+              name === "em" || name === "i" ? "swift-em" :
+              name === "del" || name === "s" || name === "strike" ? "swift-strike" :
+              "swift-underline";
+            style(base + i + tag[0].length, base + closeAt, cls);
+            inline(base, text, isActive, i + tag[0].length, closeAt);
+            i = closeAt + closeTag.length;
+            continue;
+          }
+        }
         const end = text.indexOf(">", i + 1);
         if (end > i) {
           const url = text.slice(i + 1, end);
@@ -275,6 +315,7 @@ function build(state: EditorState, options: LivePreviewOptions): PreviewValue {
             style(base + end, base + end + 2, "swift-formatting");
           }
           style(base + i + 2, base + end, "swift-strong");
+          inline(base, text, isActive, i + 2, end);
           i = end + 2;
           continue;
         }
@@ -290,6 +331,7 @@ function build(state: EditorState, options: LivePreviewOptions): PreviewValue {
             style(base + end, base + end + 2, "swift-formatting");
           }
           style(base + i + 2, base + end, "swift-strike");
+          inline(base, text, isActive, i + 2, end);
           i = end + 2;
           continue;
         }
@@ -305,6 +347,7 @@ function build(state: EditorState, options: LivePreviewOptions): PreviewValue {
             style(base + end, base + end + 2, "swift-formatting");
           }
           style(base + i + 2, base + end, "swift-highlight");
+          inline(base, text, isActive, i + 2, end);
           i = end + 2;
           continue;
         }
@@ -320,6 +363,7 @@ function build(state: EditorState, options: LivePreviewOptions): PreviewValue {
             style(base + end, base + end + 1, "swift-formatting");
           }
           style(base + i + 1, base + end, "swift-em");
+          inline(base, text, isActive, i + 1, end);
           i = end + 1;
           continue;
         }
