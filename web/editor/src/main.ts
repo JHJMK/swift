@@ -632,9 +632,15 @@ function revealCursorSoon() {
 function revealPosition(pos: number) {
   window.requestAnimationFrame(() => {
     const coords = view.coordsAtPos(pos);
-    if (!coords) return;
     const rect = els.scroller.getBoundingClientRect();
     const margin = 60;
+    if (!coords) {
+      // In preview mode CodeMirror cannot scroll its own overflow-visible
+      // scroller when the selection is outside the rendered viewport.
+      const block = view.lineBlockAt(pos);
+      els.scroller.scrollTop += view.documentTop + block.top - (rect.top + margin);
+      return;
+    }
     if (coords.top < rect.top + margin) {
       els.scroller.scrollTop -= rect.top + margin - coords.top;
     } else if (coords.bottom > rect.bottom - margin) {
