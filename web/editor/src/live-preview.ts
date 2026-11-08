@@ -30,9 +30,11 @@ export interface LivePreviewOptions {
   copy(text: string): void;
   openLink(url: string): void;
   reveal(pos: number): void;
+  preview(): boolean;
 }
 
 export const reloadMermaid = StateEffect.define<null>();
+export const refreshPreview = StateEffect.define<null>();
 
 interface PreviewValue {
   decorations: DecorationSet;
@@ -73,10 +75,12 @@ function build(state: EditorState, options: LivePreviewOptions): PreviewValue {
   const tables = parseTables(lines, fences);
 
   const active = new Set<number>();
-  for (const range of state.selection.ranges) {
-    const from = doc.lineAt(range.from).number - 1;
-    const to = doc.lineAt(range.to).number - 1;
-    for (let n = from; n <= to; n++) active.add(n);
+  if (!options.preview()) {
+    for (const range of state.selection.ranges) {
+      const from = doc.lineAt(range.from).number - 1;
+      const to = doc.lineAt(range.to).number - 1;
+      for (let n = from; n <= to; n++) active.add(n);
+    }
   }
 
   const decos: Range<Decoration>[] = [];
@@ -86,6 +90,7 @@ function build(state: EditorState, options: LivePreviewOptions): PreviewValue {
     assetUrl: options.assetUrl,
     copy: options.copy,
     toggleTask(pos) {
+      if (options.preview()) return;
       const view = viewRef;
       if (!view) return;
       const current = view.state.doc.sliceString(pos, pos + 1);
@@ -606,7 +611,7 @@ export function livePreview(options: LivePreviewOptions): Extension {
       if (
         tr.docChanged ||
         tr.selection ||
-        tr.effects.some((effect) => effect.is(reloadMermaid))
+        tr.effects.some((effect) => effect.is(reloadMermaid) || effect.is(refreshPreview))
       ) {
         return build(tr.state, options);
       }

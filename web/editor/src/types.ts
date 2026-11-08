@@ -3,6 +3,7 @@ export interface OpenPayload {
   title: string;
   content: string;
   readOnly: boolean;
+  previewMode: boolean;
   note: boolean;
   fontSize: number;
   lineHeight: number;
@@ -28,6 +29,7 @@ export type CommandName =
   | "close-search"
   | "slash"
   | "outline"
+  | "preview"
   | "focus"
   | "image"
   | "attachment"

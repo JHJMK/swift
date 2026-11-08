@@ -35,7 +35,7 @@ type codeHeaderKey struct {
 // control above each block of code in view, in the room the editor leaves
 // for its header.
 func (a *app) codeBlockHeaders(c *ui.Context, editBox, editor ui.Element, doc *docState) {
-	if doc == nil || doc.Doc == nil || doc.ReadOnly || a.findOpen {
+	if doc == nil || doc.Doc == nil || doc.ReadOnly || a.previewMode || a.findOpen {
 		return
 	}
 	boxes := doc.Doc.VisibleParagraphs()

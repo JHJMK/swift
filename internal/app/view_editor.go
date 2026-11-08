@@ -19,7 +19,7 @@ func (a *app) editorView(c *ui.Context) {
 	doc := a.doc
 	ui.Column(c).Fill().Children(func() {
 		a.docTopBar(c, doc)
-		if !doc.ReadOnly {
+		if !doc.ReadOnly && !a.previewMode {
 			a.editorToolbar(c, doc)
 		}
 		if a.findOpen {
@@ -36,7 +36,7 @@ func (a *app) editorView(c *ui.Context) {
 				ui.Column(c).WidthPercent(100).MaxWidth(a.pageContentWidth()).Padding(40, a.pagePaddingX()).Children(func() {
 					// A document created without a title shows 语雀's untitled
 					// page: a large title line above the text.
-					if doc.ShowTitle && doc.ReadOnly {
+					if doc.ShowTitle && (doc.ReadOnly || a.previewMode) {
 						ui.Text(c, doc.Title).FontSize(36).Bold().FillWidth()
 						ui.Box(c).Height(20)
 					} else if doc.ShowTitle {
@@ -109,7 +109,7 @@ func (a *app) editorView(c *ui.Context) {
 							Placeholder:   bodyPlaceholder(doc),
 							Font:          ui.Font{Size: fontSize, LineHeight: lineHeight},
 							Theme:         theme,
-							ReadOnly:      a.findOpen || doc.ReadOnly,
+							ReadOnly:      a.findOpen || doc.ReadOnly || a.previewMode,
 							NoScrollbar:   true,
 							BottomPadding: 80,
 							OnLinkCommand: a.askLink,

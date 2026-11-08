@@ -12,7 +12,7 @@ import (
 // insertAttachment asks for a file and inserts a link to it, the file
 // copied into the knowledge base's assets.
 func (a *app) insertAttachment() {
-	if a.doc == nil || a.doc.ReadOnly {
+	if a.doc == nil || a.doc.ReadOnly || a.previewMode {
 		return
 	}
 	if a.isWebDoc() {
