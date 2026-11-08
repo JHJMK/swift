@@ -12,7 +12,7 @@ import (
 )
 
 // docTopBar is the document page's header: its title and save state on the
-// left, and the outline, rename, export and more actions on the right.
+// left, and the outline, preview, width and more actions on the right.
 func (a *app) docTopBar(c *ui.Context, doc *docState) {
 	t := c.Theme()
 	ui.Row(c).Padding(topInset+8, 20, 8, 20).Gap(4).AlignItems(ui.Center).
@@ -63,9 +63,15 @@ func (a *app) docTopBar(c *ui.Context, doc *docState) {
 			}
 			a.update()
 		}
-		rename := a.chromeIconButton(c, iconPencil, "重命名", false)
-		if rename.Clicked() {
-			a.askRename(doc.Rel)
+		preview := a.chromeIconButton(c, iconEye, "预览", false)
+		if a.previewMode {
+			preview = a.chromeIconButton(c, iconPencil, "编辑", true)
+		}
+		if preview.Clicked() {
+			a.previewMode = !a.previewMode
+			if a.isWebDoc() {
+				a.sendWebCommand("preview", a.previewMode)
+			}
 			a.update()
 		}
 		more := a.chromeIconButton(c, iconMore, "更多", a.docMoreOpen)
@@ -511,7 +517,7 @@ func (a *app) slashCommands(doc *docState, close func()) []insertCommand {
 
 // openInsertMenu shows the block menu from the menu bar or a shortcut.
 func (a *app) openInsertMenu() {
-	if a.doc == nil || a.doc.ReadOnly {
+	if a.doc == nil || a.doc.ReadOnly || a.previewMode {
 		return
 	}
 	if a.isWebDoc() {
@@ -527,7 +533,7 @@ func (a *app) openInsertMenu() {
 
 // maybeSlashMenu opens the insert palette when a slash begins a paragraph.
 func (a *app) maybeSlashMenu() bool {
-	if a.doc == nil || a.doc.ReadOnly {
+	if a.doc == nil || a.doc.ReadOnly || a.previewMode {
 		return false
 	}
 	if a.doc.Doc.Formatting().Paragraph.CodeBlock {

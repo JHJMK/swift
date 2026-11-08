@@ -116,8 +116,9 @@ type app struct {
 	selectedIsDir bool
 	openDirs      map[string]*bool
 
-	doc    *docState
-	saveAt time.Time
+	doc         *docState
+	previewMode bool
+	saveAt      time.Time
 
 	prompt  *promptState
 	confirm *confirmState
@@ -341,6 +342,7 @@ func (a *app) openDoc(rel string) {
 		MTime:           mtime,
 		mermaidPreviews: previews,
 	}
+	a.previewMode = false
 	a.loadPageSettings(a.doc)
 	// Every page shows its title above the text, editable in place.
 	a.doc.ShowTitle = true
@@ -782,6 +784,7 @@ func (a *app) openNote() {
 		Web:      web,
 		MTime:    time.Now(),
 	}
+	a.previewMode = false
 	a.loadPageSettings(a.doc)
 	a.doc.ShowTitle = true
 	a.doc.TitleDraft = title
