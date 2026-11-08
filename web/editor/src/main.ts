@@ -44,7 +44,7 @@ import {
   outlineHeadings,
   parseFences,
 } from "./markdown";
-import { attachView, livePreview, reloadMermaid } from "./live-preview";
+import { attachView, livePreview, refreshPreview, reloadMermaid } from "./live-preview";
 import type {
   AttachmentResult,
   CommandPayload,
@@ -95,6 +95,7 @@ let current: OpenPayload | null = null;
 let docId = "";
 let currentMarkdown = "";
 let readOnly = false;
+let previewMode = false;
 let loading = false;
 let dirty = false;
 let previousTitle = "";
@@ -232,6 +233,7 @@ function makeEditorState(doc: string): EditorState {
         copy: copyText,
         openLink,
         reveal: revealPosition,
+        preview: () => previewMode,
       }),
       search({ top: true }),
       keymap.of([
@@ -435,7 +437,7 @@ els.editor.addEventListener(
 
 // Keep Edit > Paste enabled only while the page has the keyboard.
 window.addEventListener("focus", () => {
-  void bridge.call<void>(`${SERVICE}.SetFocused`, !readOnly).catch(() => undefined);
+  void bridge.call<void>(`${SERVICE}.SetFocused`, !isReadOnly()).catch(() => undefined);
 });
 window.addEventListener("blur", () => {
   void bridge.call<void>(`${SERVICE}.SetFocused`, false).catch(() => undefined);
@@ -511,13 +513,50 @@ function setTitle(title: string, focus = false) {
 
 function setReadOnly(value: boolean) {
   readOnly = value;
+  applyDocumentMode();
+}
+
+function isReadOnly(): boolean {
+  return readOnly || previewMode;
+}
+
+function applyDocumentMode() {
+  const value = isReadOnly();
   view.dispatch({
     effects: saveCompartment.reconfigure(EditorView.editable.of(!value)),
   });
   els.title.setAttribute("contenteditable", value ? "false" : "true");
+  els.toolbar.hidden = previewMode;
   els.statusMode.hidden = !value;
-  if (value) els.statusMode.textContent = "只读";
+  if (previewMode) els.statusMode.textContent = "预览";
+  else if (readOnly) els.statusMode.textContent = "只读";
   refreshToolbar();
+}
+
+function setPreviewMode(value: boolean) {
+  if (!current || previewMode === value) return;
+  previewMode = value;
+  current.previewMode = value;
+  closeSlash();
+  closeBlockMenu();
+  applyDocumentMode();
+  view.dispatch({ effects: refreshPreview.of(null) });
+  if (previewMode) {
+    setStatus("预览", "readonly");
+    void bridge.call<void>(`${SERVICE}.SetFocused`, false).catch(() => undefined);
+  } else {
+    if (readOnly) {
+      setStatus("只读", "readonly");
+    } else if (dirty) {
+      setStatus("正在保存…", "saving");
+      view.focus();
+      void bridge.call<void>(`${SERVICE}.SetFocused`, true).catch(() => undefined);
+    } else {
+      setStatus("已保存", "saved");
+      view.focus();
+      void bridge.call<void>(`${SERVICE}.SetFocused`, true).catch(() => undefined);
+    }
+  }
 }
 
 function applySettings(settingsValue: SettingsPayload) {
@@ -535,6 +574,7 @@ function openDocument(payload: OpenPayload) {
   closeBlockMenu();
   closeSearchPanel(view);
   current = payload;
+  previewMode = Boolean(payload.previewMode);
   docId = payload.id;
   currentMarkdown = payload.content;
   dirty = false;
@@ -544,13 +584,14 @@ function openDocument(payload: OpenPayload) {
     readableLineWidth: payload.readableLineWidth,
   });
   setTitle(payload.title);
-  setStatus(payload.readOnly ? "只读" : "已保存", payload.readOnly ? "readonly" : "saved");
+  const modeText = previewMode ? "预览" : payload.readOnly ? "只读" : "已保存";
+  setStatus(modeText, previewMode || payload.readOnly ? "readonly" : "saved");
   els.outline.hidden = !payload.outlineOpen;
   view.setState(makeEditorState(payload.content));
   setReadOnly(payload.readOnly);
   loading = false;
   view.focus();
-  void bridge.call<void>(`${SERVICE}.SetFocused`, !payload.readOnly).catch(() => undefined);
+  void bridge.call<void>(`${SERVICE}.SetFocused`, !isReadOnly()).catch(() => undefined);
   els.scroller.scrollTop = 0;
   updateCount();
   renderOutline();
@@ -620,18 +661,22 @@ function reloadDocument(payload: ReloadPayload) {
   setReadOnly(readOnly);
   view.dispatch({ selection: { anchor, head } });
   loading = false;
-  if (hadFocus) view.focus();
+  if (hadFocus && !isReadOnly()) view.focus();
   els.scroller.scrollTop = scrollTop;
   updateCount();
   renderOutline();
   refreshToolbar();
   scheduleMermaid();
-  setStatus("已保存", "saved");
+  if (previewMode) {
+    setStatus("预览", "readonly");
+  } else {
+    setStatus(readOnly ? "只读" : "已保存", readOnly ? "readonly" : "saved");
+  }
   toast("已从磁盘更新");
 }
 
 function insertText(text: string, opts: { block?: boolean; atCursor?: boolean } = {}) {
-  if (readOnly) return;
+  if (isReadOnly()) return;
   const { from, to } = view.state.selection.main;
   let insert = text;
   if (opts.block) {
@@ -649,7 +694,7 @@ function insertText(text: string, opts: { block?: boolean; atCursor?: boolean } 
 }
 
 function wrapSelection(before: string, after = before) {
-  if (readOnly) return;
+  if (isReadOnly()) return;
   const { from, to } = view.state.selection.main;
   const selected = view.state.sliceDoc(from, to);
   if (selected.startsWith(before) && selected.endsWith(after) && selected.length >= before.length + after.length) {
@@ -734,7 +779,7 @@ function blockPrefix(kind: BlockKind, level: number): string {
 
 /** setBlockKind changes the current line to a heading, list or quote. */
 function setBlockKind(kind: BlockKind, level = 0) {
-  if (readOnly) return;
+  if (isReadOnly()) return;
   if (hasNode(view.state.selection.main.head, ["FencedCode", "CodeBlock"])) return;
   const { from, to } = view.state.selection.main;
   const line = view.state.doc.lineAt(from);
@@ -785,7 +830,7 @@ function setHeading(level: number) {
 
 /** toggleInline removes the markers around the caret, or wraps the selection. */
 function toggleInline(marker: string, nodeName: string) {
-  if (readOnly) return;
+  if (isReadOnly()) return;
   const { from, to } = view.state.selection.main;
   const head = view.state.selection.main.head;
   let node: any = syntaxTree(view.state).resolveInner(head, -1);
@@ -841,7 +886,7 @@ function buildFormattingKeymap() {
 }
 
 function wrapLink() {
-  if (readOnly) return;
+  if (isReadOnly()) return;
   const { from, to } = view.state.selection.main;
   const selected = view.state.sliceDoc(from, to) || "链接文字";
   const insert = `[${selected}](https://)`;
@@ -866,7 +911,7 @@ function escapeEditor(): boolean {
 }
 
 async function handlePaste(event: ClipboardEvent) {
-  if (readOnly || !event.clipboardData) return;
+  if (isReadOnly() || !event.clipboardData) return;
   const data = event.clipboardData;
   const files = Array.from(data.files ?? []);
   if (files.length) {
@@ -895,6 +940,7 @@ async function handlePaste(event: ClipboardEvent) {
 }
 
 async function insertFiles(files: File[]) {
+  if (isReadOnly()) return;
   for (const file of files) {
     try {
       const base64 = await readBase64(file);
@@ -1113,10 +1159,10 @@ function refreshToolbar() {
   ];
   for (const key of editingKeys) {
     const button = toolbarButtons[key];
-    if (button) button.disabled = !current || readOnly;
+    if (button) button.disabled = !current || isReadOnly();
   }
   if (toolbarButtons.search) toolbarButtons.search.disabled = !current;
-  if (blockButton) blockButton.disabled = !current || readOnly;
+  if (blockButton) blockButton.disabled = !current || isReadOnly();
   if (!current) {
     if (blockLabel) blockLabel.textContent = "正文";
     for (const key of editingKeys) setToolbarActive(key, false);
@@ -1153,7 +1199,7 @@ function toggleBlockMenu() {
 }
 
 function openBlockMenu() {
-  if (!blockButton || !current || readOnly) return;
+  if (!blockButton || !current || isReadOnly()) return;
   const head = view.state.selection.main.head;
   const info = readBlockLine(view.state.doc.lineAt(head).text);
   const menu = document.createElement("div");
@@ -1198,7 +1244,7 @@ buildToolbar();
 // ---------------------------------------------------------------- title
 
 function commitTitle() {
-  if (!current || readOnly) return;
+  if (!current || isReadOnly()) return;
   const next = els.title.textContent?.replace(/\n/g, " ").trim() ?? "";
   if (!next) {
     setTitle(previousTitle);
@@ -1415,7 +1461,7 @@ function runSlash(index: number) {
 }
 
 function updateSlashMenu(update: { docChanged: boolean; selectionSet: boolean }) {
-  if (readOnly) return;
+  if (isReadOnly()) return;
   if (!update.docChanged && !update.selectionSet) return;
   const { from } = view.state.selection.main;
   const before = view.state.sliceDoc(Math.max(0, from - 80), from);
@@ -1488,7 +1534,7 @@ view.dom.addEventListener("keydown", (event) => {
 // ---------------------------------------------------------------- files
 
 async function pickImage() {
-  if (readOnly) return;
+  if (isReadOnly()) return;
   try {
     const result = await bridge.call<AttachmentResult>(`${SERVICE}.PickImage`, docId);
     if (result?.text) insertText(result.text);
@@ -1498,7 +1544,7 @@ async function pickImage() {
 }
 
 async function pickAttachment() {
-  if (readOnly) return;
+  if (isReadOnly()) return;
   try {
     const result = await bridge.call<AttachmentResult>(`${SERVICE}.PickAttachment`, docId);
     if (result?.text) insertText(result.text);
@@ -1522,8 +1568,11 @@ function handleCommand(payload: CommandPayload) {
       closeSearchPanel(view);
       break;
     case "slash":
-      if (readOnly) return;
+      if (isReadOnly()) return;
       openSlash(view.state.selection.main.from, "");
+      break;
+    case "preview":
+      setPreviewMode(Boolean(payload.open));
       break;
     case "outline":
       setOutlineOpen(Boolean(payload.open));
@@ -1550,7 +1599,7 @@ bridge.on(EVENT_OPEN, (payload) => {
 });
 bridge.on(EVENT_STATUS, (payload) => {
   const status = payload as StatusPayload;
-  setStatus(status.text, status.state);
+  if (!previewMode) setStatus(status.text, status.state);
   if (status.state === "saved") {
     dirty = false;
     window.clearTimeout(saveStateTimer);
@@ -1650,6 +1699,7 @@ flowchart LR
       title,
       content: initial,
       readOnly: false,
+      previewMode: false,
       note: false,
       fontSize: 16,
       lineHeight: 1.75,

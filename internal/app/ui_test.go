@@ -61,17 +61,22 @@ func TestUIViewOpensDocument(t *testing.T) {
 		t.Fatalf("editor not shown: %q", tt.Texts())
 	}
 
-	// The page actions rename the open document.
-	a.askRename(a.doc.Rel)
-	tt.Frame()
-	if a.prompt == nil || a.prompt.Title != "重命名" {
-		t.Fatalf("rename prompt not shown: %+v", a.prompt)
+	if !tt.HasText("预览") || tt.HasText("重命名") {
+		t.Fatalf("document actions are wrong: %q", tt.Texts())
 	}
-	if err := tt.Click("取消"); err != nil {
+	if err := tt.Click("预览"); err != nil {
 		t.Fatal(err)
 	}
-	if a.prompt != nil {
-		t.Fatal("prompt not closed")
+	tt.Frame()
+	if !a.previewMode || !tt.HasText("编辑") || tt.HasText("加粗（⌘B）") {
+		t.Fatalf("preview mode not shown: preview=%v texts=%q", a.previewMode, tt.Texts())
+	}
+	if err := tt.Click("编辑"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.previewMode || !tt.HasText("加粗（⌘B）") {
+		t.Fatalf("edit mode not restored: preview=%v texts=%q", a.previewMode, tt.Texts())
 	}
 
 	if err := tt.Click("工作台"); err != nil {

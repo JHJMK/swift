@@ -24,6 +24,7 @@ type webEditorOpen struct {
 	Title             string  `json:"title"`
 	Content           string  `json:"content"`
 	ReadOnly          bool    `json:"readOnly"`
+	PreviewMode       bool    `json:"previewMode"`
 	Note              bool    `json:"note"`
 	FontSize          float32 `json:"fontSize"`
 	LineHeight        float32 `json:"lineHeight"`
@@ -232,6 +233,7 @@ func (a *app) sendWebOpen() {
 		Title:             doc.Title,
 		Content:           doc.Markdown,
 		ReadOnly:          doc.ReadOnly,
+		PreviewMode:       a.previewMode,
 		Note:              doc.Note,
 		FontSize:          fontSize,
 		LineHeight:        lineHeight,
