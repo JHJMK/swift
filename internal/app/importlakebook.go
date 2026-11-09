@@ -4,12 +4,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -24,6 +27,7 @@ const (
 	lakebookMaxRedirects   = 5
 	lakebookMaxImageBytes  = 20 << 20
 	lakebookMaxImportBytes = 200 << 20
+	lakebookImageWorkers   = 4
 )
 
 type lakebookImportResult struct {
@@ -58,10 +62,12 @@ type lakebookImportPlan struct {
 }
 
 type lakebookImportJob struct {
-	vault *vault.Vault
-	done  chan struct{}
-	plan  *lakebookImportPlan
-	err   error
+	vault   *vault.Vault
+	file    string
+	started time.Time
+	done    chan struct{}
+	plan    *lakebookImportPlan
+	err     error
 }
 
 func (a *app) askImportLakebook() {
@@ -99,8 +105,10 @@ func (a *app) startLakebookImport(filename string) bool {
 		return false
 	}
 	job := &lakebookImportJob{
-		vault: a.vault,
-		done:  make(chan struct{}),
+		vault:   a.vault,
+		file:    filename,
+		started: time.Now(),
+		done:    make(chan struct{}),
 	}
 	a.lakebookJob = job
 	a.toast = ""
@@ -127,19 +135,25 @@ func (a *app) finishLakebookImport() {
 		return
 	}
 	a.lakebookJob = nil
+	elapsed := formatElapsed(job.started)
 	if job.err != nil {
+		log.Printf("swift: lakebook import: failed file=%q after %s: %v", filepath.Base(job.file), elapsed, job.err)
 		a.setError(job.err)
 		return
 	}
 	if a.vault != job.vault {
+		log.Printf("swift: lakebook import: cancelled file=%q after %s (workspace changed)", filepath.Base(job.file), elapsed)
 		a.setError(errors.New("工作区已变更，Lakebook 导入已取消"))
 		return
 	}
 	result, err := a.commitLakebookImport(job.plan)
 	if err != nil {
+		log.Printf("swift: lakebook import: failed file=%q after %s: %v", filepath.Base(job.file), elapsed, err)
 		a.setError(err)
 		return
 	}
+	log.Printf("swift: lakebook import: finished file=%q docs=%d images=%d failed=%d total=%s",
+		filepath.Base(job.file), result.Docs, result.Images, result.FailedImages, elapsed)
 	a.refreshTree()
 	if n := a.findNode(result.KB); n != nil {
 		a.openKB(n)
@@ -148,6 +162,19 @@ func (a *app) finishLakebookImport() {
 }
 
 func (a *app) importLakebook(filename string) (lakebookImportResult, error) {
+	started := time.Now()
+	result, err := a.commitAfterPrepare(filename)
+	if err != nil {
+		return result, err
+	}
+	log.Printf("swift: lakebook import: finished file=%q docs=%d images=%d failed=%d total=%s",
+		filepath.Base(filename), result.Docs, result.Images, result.FailedImages, formatElapsed(started))
+	return result, nil
+}
+
+// commitAfterPrepare parses and downloads the archive, then writes it to a
+// new knowledge base; importLakebook names the whole operation in its log.
+func (a *app) commitAfterPrepare(filename string) (lakebookImportResult, error) {
 	plan, err := prepareLakebook(filename)
 	if err != nil {
 		return lakebookImportResult{}, err
@@ -156,16 +183,30 @@ func (a *app) importLakebook(filename string) (lakebookImportResult, error) {
 }
 
 func prepareLakebook(filename string) (*lakebookImportPlan, error) {
+	started := time.Now()
+	size := int64(0)
+	if info, err := os.Stat(filename); err == nil {
+		size = info.Size()
+	}
+	log.Printf("swift: lakebook import: start file=%q size=%d", filepath.Base(filename), size)
 	book, err := lakebook.Parse(filename)
 	if err != nil {
+		log.Printf("swift: lakebook import: parse failed after %s: %v", formatElapsed(started), err)
 		return nil, err
 	}
+	docs := lakebookDocCount(book.Nodes)
+	log.Printf("swift: lakebook import: parsed docs=%d boards=%d after %s", docs, book.BoardCount, formatElapsed(started))
 	preparer := &lakebookImagePreparer{
 		client: newLakebookHTTPClient(),
 		images: map[string]lakebookImageData{},
 		failed: map[string]bool{},
 	}
 	preparer.collectNodes(book.Nodes)
+	log.Printf("swift: lakebook import: images refs=%d unique=%d downloaded=%d failed=%d bytes=%d total=%s",
+		preparer.references, len(preparer.images)+preparer.failedCount, len(preparer.images),
+		preparer.failedCount, preparer.total, formatElapsed(started))
+	log.Printf("swift: lakebook import: prepared docs=%d boards=%d images=%d failed=%d total=%s",
+		docs, book.BoardCount, len(preparer.images), preparer.failedCount, formatElapsed(started))
 	return &lakebookImportPlan{
 		book:         book,
 		images:       preparer.images,
@@ -173,9 +214,29 @@ func prepareLakebook(filename string) (*lakebookImportPlan, error) {
 	}, nil
 }
 
+// lakebookDocCount counts the documents of a parsed book, for logging.
+func lakebookDocCount(nodes []*lakebook.Node) int {
+	count := 0
+	var walk func([]*lakebook.Node)
+	walk = func(nodes []*lakebook.Node) {
+		for _, node := range nodes {
+			if node.Kind == lakebook.KindDoc {
+				count++
+			}
+			walk(node.Children)
+		}
+	}
+	walk(nodes)
+	return count
+}
+
 func (a *app) commitLakebookImport(plan *lakebookImportPlan) (lakebookImportResult, error) {
-	kb, err := a.vault.CreateKnowledgeBase(plan.book.Name)
+	started := time.Now()
+	log.Printf("swift: lakebook import: write start name=%q docs=%d boards=%d images=%d failed=%d",
+		plan.book.Name, lakebookDocCount(plan.book.Nodes), plan.book.BoardCount, len(plan.images), plan.failedImages)
+	kb, err := a.createKnowledgeBase(plan.book.Name)
 	if err != nil {
+		log.Printf("swift: lakebook import: write failed after %s: %v", formatElapsed(started), err)
 		return lakebookImportResult{}, err
 	}
 
@@ -192,8 +253,11 @@ func (a *app) commitLakebookImport(plan *lakebookImportPlan) (lakebookImportResu
 		plan:   plan,
 	}
 	if err := images.writeNodes(kb, plan.book.Nodes); err != nil {
+		log.Printf("swift: lakebook import: write failed kb=%q after %s: %v", kb, formatElapsed(started), err)
 		return result, err
 	}
+	log.Printf("swift: lakebook import: write done kb=%q docs=%d images=%d failed=%d after %s",
+		kb, result.Docs, result.Images, result.FailedImages, formatElapsed(started))
 	return result, nil
 }
 
@@ -201,34 +265,110 @@ type lakebookImagePreparer struct {
 	client      *http.Client
 	images      map[string]lakebookImageData
 	failed      map[string]bool
+	mu          sync.Mutex
 	total       int64
+	references  int
 	failedCount int
 }
 
+type lakebookImageJob struct {
+	key    string
+	target *url.URL
+}
+
+// collectNodes gathers the unique pictures of the book and downloads them
+// with a few workers: a book with many pictures was otherwise as slow as
+// their times added up, while a bigger text-only book stayed quick.
 func (p *lakebookImagePreparer) collectNodes(nodes []*lakebook.Node) {
-	for _, node := range nodes {
-		for _, ref := range markdown.ImageRefs(node.Markdown) {
-			p.fetch(ref)
+	var jobs []lakebookImageJob
+	seen := map[string]bool{}
+	var walk func([]*lakebook.Node)
+	walk = func(nodes []*lakebook.Node) {
+		for _, node := range nodes {
+			for _, ref := range markdown.ImageRefs(node.Markdown) {
+				p.references++
+				key, target, err := normalizeLakebookImageURL(ref)
+				if err != nil || seen[key] {
+					continue
+				}
+				seen[key] = true
+				jobs = append(jobs, lakebookImageJob{key: key, target: target})
+			}
+			walk(node.Children)
 		}
-		p.collectNodes(node.Children)
+	}
+	walk(nodes)
+	if len(jobs) == 0 {
+		return
+	}
+
+	workers := lakebookImageWorkers
+	if len(jobs) < workers {
+		workers = len(jobs)
+	}
+	queue := make(chan lakebookImageJob)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range queue {
+				p.fetch(job)
+			}
+		}()
+	}
+	for _, job := range jobs {
+		queue <- job
+	}
+	close(queue)
+	wg.Wait()
+}
+
+func (p *lakebookImagePreparer) fetch(job lakebookImageJob) {
+	started := time.Now()
+	data, name, err := p.download(job.target)
+	elapsed := time.Since(started).Round(time.Millisecond)
+	if err != nil {
+		p.mu.Lock()
+		p.failed[job.key] = true
+		p.failedCount++
+		p.mu.Unlock()
+		log.Printf("swift: lakebook import: image failed url=%q after %s: %s",
+			lakebookLogURL(job.target), elapsed, lakebookLogError(job.target, err))
+		return
+	}
+	p.mu.Lock()
+	p.images[job.key] = lakebookImageData{data: data, name: name}
+	p.mu.Unlock()
+	if elapsed >= 2*time.Second {
+		log.Printf("swift: lakebook import: image slow url=%q bytes=%d after %s",
+			lakebookLogURL(job.target), len(data), elapsed)
 	}
 }
 
-func (p *lakebookImagePreparer) fetch(raw string) {
-	key, target, err := normalizeLakebookImageURL(raw)
-	if err != nil {
-		return
+// formatElapsed keeps log durations short and readable.
+func formatElapsed(start time.Time) string {
+	return time.Since(start).Round(time.Millisecond).String()
+}
+
+// lakebookLogURL is the image URL without the query and fragment, which
+// can carry signed tokens.
+func lakebookLogURL(target *url.URL) string {
+	clone := *target
+	clone.User = nil
+	clone.RawQuery = ""
+	clone.Fragment = ""
+	return clone.String()
+}
+
+// lakebookLogError removes the signed query of the image URL when a
+// network error quotes it.
+func lakebookLogError(target *url.URL, err error) string {
+	text := err.Error()
+	if full := target.String(); full != "" {
+		text = strings.ReplaceAll(text, full, lakebookLogURL(target))
 	}
-	if _, ok := p.images[key]; ok || p.failed[key] {
-		return
-	}
-	data, name, err := p.download(target)
-	if err != nil {
-		p.failed[key] = true
-		p.failedCount++
-		return
-	}
-	p.images[key] = lakebookImageData{data: data, name: name}
+	return text
 }
 
 func (p *lakebookImagePreparer) download(target *url.URL) ([]byte, string, error) {
@@ -242,7 +382,7 @@ func (p *lakebookImagePreparer) download(target *url.URL) ([]byte, string, error
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, "", errors.New("image request failed")
+		return nil, "", fmt.Errorf("image request failed: %s", response.Status)
 	}
 
 	contentType := strings.ToLower(strings.TrimSpace(response.Header.Get("Content-Type")))
@@ -258,7 +398,9 @@ func (p *lakebookImagePreparer) download(target *url.URL) ([]byte, string, error
 		return nil, "", errors.New("image type is unknown")
 	}
 
+	p.mu.Lock()
 	remaining := int64(lakebookMaxImportBytes) - p.total
+	p.mu.Unlock()
 	if remaining <= 0 {
 		return nil, "", errors.New("image import limit reached")
 	}
@@ -272,10 +414,13 @@ func (p *lakebookImagePreparer) download(target *url.URL) ([]byte, string, error
 	if len(data) > lakebookMaxImageBytes {
 		return nil, "", errors.New("image is too large")
 	}
-	if int64(len(data)) > remaining {
+	p.mu.Lock()
+	if p.total+int64(len(data)) > lakebookMaxImportBytes {
+		p.mu.Unlock()
 		return nil, "", errors.New("image import limit reached")
 	}
 	p.total += int64(len(data))
+	p.mu.Unlock()
 	return data, lakebookImageName(target, extension, contentType), nil
 }
 

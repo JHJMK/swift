@@ -22,6 +22,10 @@ type Config struct {
 	// PageSettings are the display settings of documents that override
 	// the defaults, by rel.
 	PageSettings map[string]PageSettings `json:"pageSettings,omitempty"`
+	// PinnedKBs are the knowledge bases shown in the sidebar's 常用 list,
+	// in display order. A nil list means every knowledge base is shown,
+	// as vaults from before the list existed do.
+	PinnedKBs *[]string `json:"pinnedKBs,omitempty"`
 	// Sync is the remote the vault is mirrored to, if any.
 	Sync remote.Settings `json:"sync,omitempty"`
 }

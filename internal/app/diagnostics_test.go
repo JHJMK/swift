@@ -230,3 +230,31 @@ func TestSettingsShowsDiagnosticLogs(t *testing.T) {
 		}
 	}
 }
+
+// Starting the app writes a first line, so the log directory has today's
+// file even when nothing else warns or fails.
+func TestStartDiagnosticsWritesStartupLine(t *testing.T) {
+	oldOverride := configDirOverride
+	configDirOverride = t.TempDir()
+	t.Cleanup(func() { configDirOverride = oldOverride })
+	oldWriter, oldFlags := log.Writer(), log.Flags()
+	t.Cleanup(func() {
+		log.SetOutput(oldWriter)
+		log.SetFlags(oldFlags)
+	})
+
+	date := time.Now().Format("2006-01-02")
+	logger := startDiagnostics()
+	if logger == nil {
+		t.Fatal("diagnostics did not start")
+	}
+	t.Cleanup(func() { _ = logger.Close() })
+
+	got, err := os.ReadFile(filepath.Join(configDirOverride, "logs", "swift-"+date+".log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "swift: start version=") {
+		t.Fatalf("startup line missing: %q", got)
+	}
+}

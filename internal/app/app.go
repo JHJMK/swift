@@ -128,7 +128,10 @@ type app struct {
 
 	selected      string
 	selectedIsDir bool
-	openDirs      map[string]*bool
+	// allKBs shows the page listing every knowledge base, with the
+	// sidebar's 常用 list beside it.
+	allKBs   bool
+	openDirs map[string]*bool
 
 	doc         *docState
 	previewMode bool
@@ -166,9 +169,11 @@ type app struct {
 	blockMenuOpen    bool
 	docMoreOpen      bool
 	// rowMenu is the node whose tree row menu shows, by its path, and
-	// rowPlus the node whose add menu shows.
-	rowMenu string
-	rowPlus string
+	// rowPlus the node whose add menu shows. cardMenu is the knowledge
+	// base card whose menu shows on the all-knowledge-bases page.
+	rowMenu  string
+	rowPlus  string
+	cardMenu string
 
 	// clipboard holds the document or folder copied in the tree.
 	clipboard *clipboardState
@@ -325,6 +330,7 @@ func (a *app) update() {
 
 // openDoc shows a document in the editor.
 func (a *app) openDoc(rel string) {
+	a.allKBs = false
 	a.findOpen = false
 	a.codeTitleEditing = 0
 	a.codeTitleFocus = false
@@ -640,7 +646,7 @@ func (a *app) newParent() (string, bool) {
 	if len(a.tree) > 0 {
 		return a.tree[0].Rel, true
 	}
-	kb, err := a.vault.CreateKnowledgeBase("我的知识库")
+	kb, err := a.createKnowledgeBase("我的知识库")
 	if err != nil {
 		a.setError(err)
 		return "", false
@@ -659,10 +665,11 @@ func (a *app) askNewKnowledgeBase() {
 		Value:   "新知识库",
 		OKLabel: "创建",
 		OnOK: func(value string) error {
-			rel, err := a.vault.CreateKnowledgeBase(value)
+			rel, err := a.createKnowledgeBase(value)
 			if err != nil {
 				return err
 			}
+			a.allKBs = false
 			a.selected = rel
 			a.selectedIsDir = true
 			a.openState(rel)
@@ -707,6 +714,7 @@ func (a *app) askNewFolderTitled(parent, title, value string) {
 			*a.openState(rel) = true
 			a.flushDoc()
 			a.doc = nil
+			a.allKBs = false
 			a.selected = rel
 			a.selectedIsDir = true
 			a.refreshTree()
@@ -758,7 +766,7 @@ func (a *app) createFirstDoc() error {
 	if title == "" {
 		title = titleUntitled
 	}
-	kb, err := a.vault.CreateKnowledgeBase(kbName)
+	kb, err := a.createKnowledgeBase(kbName)
 	if err != nil {
 		return err
 	}
@@ -829,6 +837,7 @@ func (a *app) openNote() {
 	if a.doc != nil && a.doc.Note {
 		return
 	}
+	a.allKBs = false
 	a.codeTitleEditing = 0
 	a.codeTitleFocus = false
 	a.codeTitleFocused = false
@@ -883,7 +892,7 @@ func (a *app) askNoteSaveTo() {
 	a.flushTitle()
 	a.flushDoc()
 	if len(a.tree) == 0 {
-		if _, err := a.vault.CreateKnowledgeBase("我的知识库"); err != nil {
+		if _, err := a.createKnowledgeBase("我的知识库"); err != nil {
 			a.setError(err)
 			return
 		}
@@ -1060,6 +1069,11 @@ func (a *app) renameNode(rel, value string) error {
 	if err != nil {
 		return err
 	}
+	if !strings.Contains(rel, "/") && rel != newRel {
+		if err := a.renameKBPin(rel, newRel); err != nil {
+			a.setError(err)
+		}
+	}
 	if openUnder {
 		moved := newRel + strings.TrimPrefix(a.doc.Rel, rel)
 		a.doc = nil
@@ -1097,6 +1111,11 @@ func (a *app) askDelete(rel string) {
 			if err := a.vault.Trash(rel); err != nil {
 				a.setError(err)
 				return
+			}
+			if !strings.Contains(rel, "/") {
+				if err := a.forgetKBPin(rel); err != nil {
+					a.setError(err)
+				}
 			}
 			if docAffected {
 				a.doc = nil
@@ -1714,6 +1733,7 @@ func (a *app) findNext(dir int) {
 func (a *app) chooseTree(n *Node) {
 	a.flushTitle()
 	a.flushDoc()
+	a.allKBs = false
 	a.selected = n.Rel
 	a.selectedIsDir = n.IsDir
 	if n.IsDir {

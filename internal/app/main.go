@@ -4,19 +4,32 @@ import (
 	"io"
 	"log"
 	"os"
+	"runtime"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
 
-// Run starts 语燕 and stays until it quits.
-func Run() {
+// startDiagnostics opens the day's diagnostic log and makes the standard
+// logger write to it. The first line is written right away, so a quiet run
+// still leaves a log file to export. A failure is reported to the terminal
+// and does not stop the app.
+func startDiagnostics() *diagnosticLogger {
 	diagnostics, err := openDiagnosticLogger()
 	if err != nil {
 		log.Printf("swift: diagnostic logs: %v", err)
-	} else {
-		log.SetOutput(io.MultiWriter(os.Stderr, diagnostics))
-		log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+		return nil
+	}
+	log.SetOutput(io.MultiWriter(diagnostics, os.Stderr))
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	log.Printf("swift: start version=%s os=%s arch=%s", appVersion(), runtime.GOOS, runtime.GOARCH)
+	return diagnostics
+}
+
+// Run starts 语燕 and stays until it quits.
+func Run() {
+	diagnostics := startDiagnostics()
+	if diagnostics != nil {
 		defer diagnostics.Close()
 	}
 	// 语燕 is light throughout: on a dark desktop its window chrome stays
