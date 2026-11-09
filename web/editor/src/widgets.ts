@@ -5,6 +5,11 @@ export interface WidgetContext {
   docId: string;
   assetUrl(ref: string): string;
   copy(text: string): void;
+  /** copyImage puts the picture itself on the clipboard, not its path. */
+  copyImage(src: string, ref: string): void;
+  /** remeasure tells the editor a widget changed height, as a picture
+   * loading does, so the text below it stays in step with the caret. */
+  remeasure(): void;
   toggleTask(pos: number): void;
   enter(pos: number): void;
 }
@@ -190,32 +195,54 @@ export class ImageWidget extends WidgetType {
     readonly alt: string,
     readonly pos: number,
     readonly block: boolean,
+    readonly ref: string,
     readonly ctx: WidgetContext,
   ) {
     super();
   }
 
   eq(other: ImageWidget): boolean {
-    return other.src === this.src && other.alt === this.alt && other.block === this.block;
+    return other.src === this.src && other.alt === this.alt && other.block === this.block && other.ref === this.ref;
   }
 
   toDOM(): HTMLElement {
     const wrap = el("span", this.block ? "swift-image-block" : "swift-image");
     const img = el("img", "swift-image-el");
-    img.src = this.src;
     img.alt = this.alt;
     img.loading = "lazy";
     img.title = this.alt ? `${this.alt}（点击编辑）` : "点击编辑图片";
+    // Vault pictures come from the app's asset scheme, another origin.
+    // Ask for them in CORS mode (MyGo serves the headers) so a copy can
+    // read their pixels into a data URL.
+    if (/^(swiftassets:|https?:\/\/swiftassets\.localhost\/)/i.test(this.src)) {
+      img.crossOrigin = "anonymous";
+    }
     img.addEventListener("error", () => {
       wrap.classList.add("is-missing");
       wrap.setAttribute("title", "图片无法加载");
+      this.ctx.remeasure();
     });
+    // The height of the picture is only known once it loads; without a new
+    // measure the lines below it keep the caret and clicks of the old
+    // layout, offset from the text.
+    img.addEventListener("load", () => this.ctx.remeasure());
     img.addEventListener("mousedown", (e) => e.preventDefault());
     img.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
       this.ctx.enter(this.pos);
     });
+    // A right click copies the picture itself, rather than the menu the
+    // web view would show with its address.
+    wrap.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.ctx.copyImage(this.src, this.ref);
+    });
+    // Attach the listeners before the source, so a cached picture that is
+    // complete at once still triggers a measure.
+    img.src = this.src;
+    if (img.complete) this.ctx.remeasure();
     wrap.appendChild(img);
     return wrap;
   }

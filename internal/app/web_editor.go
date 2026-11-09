@@ -1,11 +1,17 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	"image/png"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +19,8 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui/richtext"
+	_ "golang.org/x/image/bmp"
+	_ "golang.org/x/image/webp"
 )
 
 // The page's editor is a web view when the system webview is there. Go
@@ -172,6 +180,49 @@ func (s *webEditorService) PickAttachment(_ context.Context, id string) (webEdit
 // CopyText copies from the page through the app's clipboard.
 func (s *webEditorService) CopyText(_ context.Context, text string) {
 	mygo.Clipboard.WriteText(text)
+}
+
+// CopyImage puts the picture a right click named on the clipboard as the
+// picture itself, rather than its path.
+func (s *webEditorService) CopyImage(_ context.Context, doc, ref string) error {
+	return s.a.webCopyImage(doc, ref)
+}
+
+// webCopyImage reads the picture a document refers to and copies it to the
+// clipboard as PNG.
+func (a *app) webCopyImage(doc, ref string) error {
+	if a.vault == nil {
+		return errors.New("没有打开的文档目录")
+	}
+	abs, ok := a.resolveWebAsset(doc, ref)
+	if !ok {
+		return errors.New("找不到图片")
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		return err
+	}
+	png, err := imageToPNG(data)
+	if err != nil {
+		return err
+	}
+	return mygo.Clipboard.WriteImage(png)
+}
+
+// imageToPNG returns picture data as PNG, re-encoding the other formats.
+func imageToPNG(data []byte) ([]byte, error) {
+	if http.DetectContentType(data) == "image/png" {
+		return data, nil
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("不支持的图片格式：%w", err)
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // OpenLink opens a link clicked with Cmd or Ctrl in the page.

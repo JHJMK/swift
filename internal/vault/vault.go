@@ -111,7 +111,13 @@ func OpenVault(root string) (*Vault, error) {
 // Tree returns the knowledge bases and everything below them.
 func (v *Vault) Tree() ([]*Node, error) {
 	var roots []*Node
-	for _, name := range v.orderedChildNames("") {
+	for _, name := range v.orderedRootNames() {
+		if root, ok := v.External[name]; ok {
+			if info, err := os.Stat(root); err == nil && info.IsDir() {
+				roots = append(roots, v.scanNode(name, name, true))
+			}
+			continue
+		}
 		abs := filepath.Join(v.Root, name)
 		info, err := os.Stat(abs)
 		if err != nil || !info.IsDir() || strings.HasPrefix(name, ".") {
@@ -119,17 +125,45 @@ func (v *Vault) Tree() ([]*Node, error) {
 		}
 		roots = append(roots, v.scanNode(name, name, true))
 	}
-	var names []string
-	for name := range v.External {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	return roots, nil
+}
+
+// orderedRootNames lists the top-level entries of the vault: the folders
+// on disk and the external knowledge bases, in their saved order, so a
+// knowledge base can be dragged anywhere among them.
+func (v *Vault) orderedRootNames() []string {
+	names := v.orderedChildNames("")
+	onDisk := map[string]bool{}
 	for _, name := range names {
-		if info, err := os.Stat(v.External[name]); err == nil && info.IsDir() {
-			roots = append(roots, v.scanNode(name, name, true))
+		onDisk[name] = true
+	}
+	var missing []string
+	for name := range v.External {
+		if !onDisk[name] {
+			missing = append(missing, name)
 		}
 	}
-	return roots, nil
+	sort.Strings(missing)
+	names = append(names, missing...)
+	rank := map[string]int{}
+	for i, name := range v.Order[""] {
+		rank[name] = i
+	}
+	sort.SliceStable(names, func(i, j int) bool {
+		ri, iok := rank[names[i]]
+		rj, jok := rank[names[j]]
+		switch {
+		case iok && jok:
+			return ri < rj
+		case iok:
+			return true
+		case jok:
+			return false
+		default:
+			return names[i] < names[j]
+		}
+	})
+	return names
 }
 
 func (v *Vault) scanNode(rel, name string, isDir bool) *Node {
@@ -371,9 +405,11 @@ func (v *Vault) Rename(rel, newName string) (string, error) {
 	return newRel, v.saveOrder()
 }
 
-// Move moves rel under newParentRel. A folder target receives the node as
-// its last child; a document target inserts the node before it in that
-// document's folder. Knowledge bases only move among knowledge bases.
+// Move moves rel under newParentRel, or reorders it inside its own parent
+// when newParentRel is that parent: the node then goes before beforeName,
+// or at the end when beforeName is empty. A folder target receives the
+// node as its last child; a document target inserts the node before it in
+// that document's folder. Knowledge bases only move among knowledge bases.
 func (v *Vault) Move(rel, newParentRel, beforeName string) (string, error) {
 	oldParent, oldName, err := splitRel(rel)
 	if err != nil {
@@ -388,6 +424,11 @@ func (v *Vault) Move(rel, newParentRel, beforeName string) (string, error) {
 	if rel == newParentRel || strings.HasPrefix(newParentRel, rel+"/") {
 		return "", errors.New("不能移动到自身内部")
 	}
+	// Dropping a node on the strip just below its previous sibling asks
+	// it to go where it already is; moving it to the end would surprise.
+	if newParentRel == oldParent && beforeName == oldName {
+		return rel, nil
+	}
 	oldAbs, err := v.abs(rel)
 	if err != nil {
 		return "", err
@@ -399,6 +440,13 @@ func (v *Vault) Move(rel, newParentRel, beforeName string) (string, error) {
 	newParentAbs, err := v.abs(newParentRel)
 	if err != nil {
 		return "", err
+	}
+
+	// An external knowledge base only changes its place among the others;
+	// its folder stays where it is outside the vault.
+	if oldParent == "" && newParentRel == "" && v.External[oldName] != "" {
+		v.Order[""] = insertAt(without(v.orderList(""), oldName), oldName, beforeName)
+		return rel, v.saveOrder()
 	}
 
 	newName := oldName
@@ -449,13 +497,13 @@ func (v *Vault) Move(rel, newParentRel, beforeName string) (string, error) {
 		v.remapOrder(oldDir, newDirRel)
 	}
 
-	oldOrder := v.orderedChildNames(oldParent)
+	oldOrder := v.orderList(oldParent)
 	if newParentRel == oldParent {
 		order := without(oldOrder, oldName)
 		order = insertAt(order, newName, beforeName)
 		v.Order[oldParent] = order
 	} else {
-		targetOrder := v.orderedChildNames(newParentRel)
+		targetOrder := v.orderList(newParentRel)
 		v.Order[oldParent] = without(oldOrder, oldName)
 		targetOrder = without(targetOrder, newName)
 		v.Order[newParentRel] = insertAt(targetOrder, newName, beforeName)
@@ -1297,8 +1345,18 @@ func (v *Vault) uniqueName(dirAbs, base, ext string) string {
 	}
 }
 
+// orderList returns the entries of a directory in their current display
+// order, with the knowledge bases' own list taking the external knowledge
+// bases into account.
+func (v *Vault) orderList(parentRel string) []string {
+	if parentRel == "" {
+		return v.orderedRootNames()
+	}
+	return v.orderedChildNames(parentRel)
+}
+
 func (v *Vault) insertOrder(parentRel, name, beforeName string) {
-	order := without(v.orderedChildNames(parentRel), name)
+	order := without(v.orderList(parentRel), name)
 	v.Order[parentRel] = insertAt(order, name, beforeName)
 }
 
@@ -1317,12 +1375,12 @@ func insertAt(order []string, name, beforeName string) []string {
 }
 
 func (v *Vault) removeOrder(parentRel, name string) {
-	order := v.orderedChildNames(parentRel)
+	order := v.orderList(parentRel)
 	v.Order[parentRel] = without(order, name)
 }
 
 func (v *Vault) replaceOrder(parentRel, oldName, newName string) {
-	order := v.orderedChildNames(parentRel)
+	order := v.orderList(parentRel)
 	for i, name := range order {
 		if name == oldName {
 			order[i] = newName

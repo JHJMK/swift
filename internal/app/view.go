@@ -36,6 +36,10 @@ func (a *app) view(c *ui.Context) {
 		a.syncKBWatch()
 		a.syncWebIdentity()
 		a.mainView(c)
+		// Drop and context-menu actions wait until the row that reported
+		// them is built; the tree rows are built after the sidebar, so
+		// run them once the whole main view exists.
+		a.runPending()
 	}
 	if a.doc == nil {
 		a.setEditorFocused(false)
@@ -46,6 +50,7 @@ func (a *app) view(c *ui.Context) {
 		a.insertPalette(c, anchor, a.doc)
 	}
 	a.promptModal(c)
+	a.firstDocModal(c)
 	a.confirmModal(c)
 	a.settingsModal(c)
 	a.pageSettingsModal(c)
@@ -325,8 +330,8 @@ func (a *app) globalSidebar(c *ui.Context) {
 					if kb := a.contextKB(); kb != nil && kb.Rel == n.Rel {
 						current = true
 					}
-					row := ui.Row(c).Padding(7, 10).Gap(9).Radius(6).AlignItems(ui.Center).
-						MinHeight(32).OnClick(func() { a.openKB(n) })
+					row := ui.Row(c).Padding(5, 10).Gap(9).Radius(6).AlignItems(ui.Center).
+						Height(32).OnClick(func() { a.openKB(n) })
 					if row.RightClicked() {
 						rel := n.Rel
 						a.pending = func() {
@@ -339,6 +344,17 @@ func (a *app) globalSidebar(c *ui.Context) {
 						row.Background(ui.Hex(sidebarSel))
 					} else if row.Hovered() {
 						row.Background(ui.Hex(hoverBg))
+					}
+					// Knowledge bases reorder among themselves by dragging:
+					// the half of the row tells whether one goes above or
+					// below the row's knowledge base.
+					row.Drag(dragItem{Rel: n.Rel})
+					if src, over := ui.DragOver[dragItem](row); over && !strings.Contains(src.Rel, "/") && src.Rel != n.Rel {
+						insertMark(c, row, kbDragEdge(row))
+					}
+					if src, ok := ui.Drop[dragItem](row); ok {
+						src, target, edge := src.Rel, n, kbDragEdge(row)
+						a.pending = func() { a.dropKB(src, target, edge) }
 					}
 					row.Children(func() {
 						ui.Icon(c, iconBook).FontSize(16).TextColor(ui.Hex(bookColor))
@@ -407,13 +423,19 @@ func (a *app) globalSidebar(c *ui.Context) {
 					})
 				}
 			})
-			if a.pending != nil {
-				fn := a.pending
-				a.pending = nil
-				fn()
-			}
 		})
 	})
+}
+
+// runPending carries out the action a row reported during this frame,
+// after the rows around it have been built.
+func (a *app) runPending() {
+	if a.pending == nil {
+		return
+	}
+	fn := a.pending
+	a.pending = nil
+	fn()
 }
 
 func (a *app) lakebookImportRow(c *ui.Context) {
@@ -681,17 +703,16 @@ func (a *app) treeRow(c *ui.Context, n *Node, depth int) {
 	})
 
 	row.Drag(dragItem{Rel: n.Rel})
-	if src, ok := ui.Drop[dragItem](row); ok {
-		src := src
-		n := n
-		a.pending = func() {
-			if from := a.findNode(src.Rel); from != nil {
-				a.dropNode(from, n)
-			}
+	if _, over := ui.DragOver[dragItem](row); over {
+		if edge := dragEdge(row); edge != "" {
+			insertMark(c, row, edge)
+		} else {
+			row.Background(t.Accent.Alpha(0.14))
 		}
 	}
-	if _, over := ui.DragOver[dragItem](row); over {
-		row.Background(t.Accent.Alpha(0.14))
+	if src, ok := ui.Drop[dragItem](row); ok {
+		src, n, edge := src.Rel, n, dragEdge(row)
+		a.pending = func() { a.dropTreeItem(src, n, edge) }
 	}
 
 	// A right click opens the same menu as the row's More button, rather
@@ -704,6 +725,47 @@ func (a *app) treeRow(c *ui.Context, n *Node, depth int) {
 			a.update()
 		}
 	}
+}
+
+// dragEdge tells which strip of a dragged-over row the pointer is in: the
+// top or bottom one inserts the dragged node there, the middle nests it
+// into the row's node.
+func dragEdge(e ui.Element) string {
+	_, y, _ := e.PointerPosition()
+	h := e.Bounds().H
+	if h <= 0 || y < 0 {
+		return ""
+	}
+	if y < h*0.3 {
+		return "top"
+	}
+	if y > h*0.7 {
+		return "bottom"
+	}
+	return ""
+}
+
+// kbDragEdge tells which half of a knowledge base row the pointer is in:
+// a knowledge base dropped there goes above or below the row's, as
+// knowledge bases only reorder among themselves.
+func kbDragEdge(e ui.Element) string {
+	_, y, _ := e.PointerPosition()
+	if y >= e.Bounds().H/2 {
+		return "bottom"
+	}
+	return "top"
+}
+
+// insertMark draws the line where a dragged node would land.
+func insertMark(c *ui.Context, e ui.Element, edge string) {
+	accent := c.Theme().Accent
+	e.DrawOver(func(p *ui.Painter, r ui.Rect) {
+		y := r.Y
+		if edge == "bottom" {
+			y = r.Y + r.H - 2
+		}
+		p.Fill(ui.Rect{X: r.X + 2, Y: y, W: r.W - 4, H: 2}, accent, 1)
+	})
 }
 
 // nodeAction is an action a node's row menu offers.

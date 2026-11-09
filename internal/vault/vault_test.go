@@ -191,3 +191,104 @@ func TestVaultUniqueNames(t *testing.T) {
 		t.Fatalf("duplicate names: %q and %q", first, second)
 	}
 }
+
+// Knowledge bases reorder among themselves, external ones included, and
+// an external folder stays where it is.
+func TestVaultKnowledgeBaseReorder(t *testing.T) {
+	v := newTestVault(t)
+	kb1, err := v.CreateKnowledgeBase("库一")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kb2, err := v.CreateKnowledgeBase("库二")
+	if err != nil {
+		t.Fatal(err)
+	}
+	external := t.TempDir()
+	if err := os.WriteFile(filepath.Join(external, "外部文档.md"), []byte("内容"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	extName, err := v.AddExternal("外部库", external)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// An external knowledge base lands among the others by dragging.
+	if _, err := v.Move(extName, "", kb1); err != nil {
+		t.Fatal(err)
+	}
+	tree, err := v.Tree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := []string{}
+	for _, n := range tree {
+		names = append(names, n.Name)
+	}
+	want := []string{extName, kb1, kb2}
+	if len(names) != len(want) || names[0] != want[0] || names[1] != want[1] || names[2] != want[2] {
+		t.Fatalf("knowledge base order = %v, want %v", names, want)
+	}
+	if _, err := os.Stat(filepath.Join(v.Root, extName)); !os.IsNotExist(err) {
+		t.Fatal("the external folder was moved into the vault")
+	}
+	if _, err := os.Stat(filepath.Join(external, "外部文档.md")); err != nil {
+		t.Fatal("the external folder lost its files")
+	}
+
+	// The order survives reopening the vault.
+	reopened, err := OpenVault(v.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err = reopened.Tree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tree[0].Name; got != extName {
+		t.Fatalf("first knowledge base after reopening = %q, want %q", got, extName)
+	}
+
+	// A real knowledge base moves after the external one.
+	if _, err := v.Move(kb2, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	tree, _ = v.Tree()
+	if got := tree[len(tree)-1].Name; got != kb2 {
+		t.Fatalf("last knowledge base = %q, want %q", got, kb2)
+	}
+}
+
+// Reordering a node to the place it already holds is a no-op, not a move
+// to the end.
+func TestVaultMoveToSamePlace(t *testing.T) {
+	v := newTestVault(t)
+	kb, _ := v.CreateKnowledgeBase("库")
+	if _, err := v.CreateDoc(kb, "第一"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.CreateDoc(kb, "第二"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.CreateDoc(kb, "第三"); err != nil {
+		t.Fatal(err)
+	}
+	// "第二" dropped just below "第一" is where it already is.
+	if moved, err := v.Move("库/第二.md", kb, "第二.md"); err != nil {
+		t.Fatal(err)
+	} else if moved != "库/第二.md" {
+		t.Fatalf("moved = %q", moved)
+	}
+	tree, err := v.Tree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, n := range tree[0].Children {
+		names = append(names, n.Name)
+	}
+	want := []string{"第一.md", "第二.md", "第三.md"}
+	if len(names) != len(want) || names[0] != want[0] || names[1] != want[1] || names[2] != want[2] {
+		t.Fatalf("children order = %v, want %v", names, want)
+	}
+}

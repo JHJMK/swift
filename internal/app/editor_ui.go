@@ -215,20 +215,52 @@ func (a *app) pagePaddingX() float32 {
 func (a *app) pageFont(doc *docState) (size, lineHeight float32) {
 	size, lineHeight = doc.PageFontSize, doc.PageLineHeight
 	if size <= 0 {
-		size = 16
+		size = defaultPageFontSize
 	}
 	if lineHeight <= 0 {
-		lineHeight = 1.75
+		lineHeight = defaultPageLineHeight
 	}
 	return
 }
 
-// loadPageSettings reads a document's saved display settings.
+// normalizePageSettings fills in the defaults of a partial setting.
+func normalizePageSettings(s PageSettings) PageSettings {
+	if s.FontSize <= 0 {
+		s.FontSize = defaultPageFontSize
+	}
+	if s.LineHeight <= 0 {
+		s.LineHeight = defaultPageLineHeight
+	}
+	return s
+}
+
+// defaultPageSettings returns the global page settings new documents use.
+func (a *app) defaultPageSettings() PageSettings {
+	s := PageSettings{LineHeight: defaultPageLineHeight, FontSize: defaultPageFontSize}
+	if a.cfg != nil {
+		s = normalizePageSettings(a.cfg.DefaultPageSettings)
+	}
+	return s
+}
+
+// hasPageSettings reports whether a document overrides the global page
+// settings.
+func (a *app) hasPageSettings(rel string) bool {
+	if a.cfg == nil || a.cfg.PageSettings == nil {
+		return false
+	}
+	_, ok := a.cfg.PageSettings[rel]
+	return ok
+}
+
+// loadPageSettings gives a document its display settings: the globals,
+// then its own settings when it has any.
 func (a *app) loadPageSettings(doc *docState) {
 	if doc == nil {
 		return
 	}
-	doc.PageFontSize, doc.PageLineHeight = 16, 1.75
+	global := a.defaultPageSettings()
+	doc.PageFontSize, doc.PageLineHeight = global.FontSize, global.LineHeight
 	if a.cfg == nil || a.cfg.PageSettings == nil {
 		return
 	}
@@ -242,10 +274,16 @@ func (a *app) loadPageSettings(doc *docState) {
 	}
 }
 
-// savePageSettings writes a document's display settings, leaving its
-// Markdown alone.
+// savePageSettings writes a document's own display settings, which
+// override the global defaults. It leaves the Markdown alone.
 func (a *app) savePageSettings(doc *docState) {
 	if doc == nil || doc.Note || a.cfg == nil {
+		return
+	}
+	// Choosing the values the document already follows keeps it on the
+	// global defaults instead of freezing them into an override.
+	global := a.defaultPageSettings()
+	if !a.hasPageSettings(doc.Rel) && doc.PageFontSize == global.FontSize && doc.PageLineHeight == global.LineHeight {
 		return
 	}
 	if a.cfg.PageSettings == nil {
@@ -258,6 +296,48 @@ func (a *app) savePageSettings(doc *docState) {
 	if a.isWebDoc() {
 		a.sendWebSettings()
 	}
+}
+
+// resetPageSettings makes a document follow the global page settings
+// again, dropping its own.
+func (a *app) resetPageSettings(doc *docState) error {
+	if doc == nil || doc.Note || a.cfg == nil {
+		return nil
+	}
+	if a.cfg.PageSettings != nil {
+		delete(a.cfg.PageSettings, doc.Rel)
+	}
+	if err := saveConfig(a.cfg); err != nil {
+		return err
+	}
+	a.loadPageSettings(doc)
+	if a.isWebDoc() {
+		a.sendWebSettings()
+	}
+	return nil
+}
+
+// saveDefaultPageSettings updates the settings new documents start with.
+// Documents that already override them keep their own.
+func (a *app) saveDefaultPageSettings(s PageSettings) error {
+	if a.cfg == nil {
+		return nil
+	}
+	s = normalizePageSettings(s)
+	if a.cfg.DefaultPageSettings == s {
+		return nil
+	}
+	a.cfg.DefaultPageSettings = s
+	if err := saveConfig(a.cfg); err != nil {
+		return err
+	}
+	if a.doc != nil && !a.hasPageSettings(a.doc.Rel) {
+		a.loadPageSettings(a.doc)
+		if a.isWebDoc() {
+			a.sendWebSettings()
+		}
+	}
+	return nil
 }
 
 // editorToolbar is the compact icon toolbar above the page.

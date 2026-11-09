@@ -16,7 +16,11 @@ type Config struct {
 	FileTreeWidth float32 `json:"fileTreeWidth,omitempty"`
 	// OutlineWidth is the width of the web editor's outline.
 	OutlineWidth float32 `json:"outlineWidth,omitempty"`
-	// PageSettings are the display settings of documents, by rel.
+	// DefaultPageSettings are the page display settings new documents
+	// start with, unless a document has settings of its own.
+	DefaultPageSettings PageSettings `json:"defaultPageSettings,omitzero"`
+	// PageSettings are the display settings of documents that override
+	// the defaults, by rel.
 	PageSettings map[string]PageSettings `json:"pageSettings,omitempty"`
 	// Sync is the remote the vault is mirrored to, if any.
 	Sync remote.Settings `json:"sync,omitempty"`
@@ -30,6 +34,9 @@ const (
 	defaultOutlineWidth = float32(240)
 	minOutlineWidth     = float32(180)
 	maxOutlineWidth     = float32(420)
+
+	defaultPageLineHeight = float32(1.75)
+	defaultPageFontSize   = float32(16)
 )
 
 // PageSettings are a document page's display settings. They do not

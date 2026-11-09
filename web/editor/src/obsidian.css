@@ -809,7 +809,7 @@ button {
 }
 
 .swift-table-wrap {
-  margin: 0.9em 0;
+  padding: 0.9em 0;
   overflow-x: auto;
 }
 
@@ -851,8 +851,7 @@ button {
 
 .swift-mermaid {
   position: relative;
-  margin: 1.1em 0;
-  padding: 2px 0;
+  padding: calc(1.1em + 2px) 0;
 }
 
 .swift-mermaid-body {
@@ -879,12 +878,15 @@ button {
   opacity: 1;
 }
 
+/* Block widgets space themselves with padding, not margin: CodeMirror
+ * measures a widget's own box, and margins that escape it leave the lines
+ * below offset from the caret and clicks. */
 .swift-image-block {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 3px;
-  margin: 0.6em 0;
+  padding: 0.6em 0;
 }
 
 .swift-image {

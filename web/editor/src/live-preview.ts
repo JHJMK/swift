@@ -28,6 +28,7 @@ export interface LivePreviewOptions {
   docId: string;
   assetUrl(ref: string): string;
   copy(text: string): void;
+  copyImage(src: string, ref: string): void;
   openLink(url: string): void;
   reveal(pos: number): void;
   preview(): boolean;
@@ -95,6 +96,10 @@ function build(
     docId: options.docId,
     assetUrl: options.assetUrl,
     copy: options.copy,
+    copyImage: options.copyImage,
+    remeasure() {
+      viewRef?.requestMeasure();
+    },
     toggleTask(pos) {
       if (options.preview()) return;
       const view = viewRef;
@@ -159,7 +164,7 @@ function build(
             const resolved = inlineAssetUrl(target) || options.assetUrl(target);
             decos.push(
               Decoration.replace({
-                widget: new ImageWidget(resolved, alias || target, base + i, false, ctx),
+                widget: new ImageWidget(resolved, alias || target, base + i, false, target, ctx),
               }).range(base + i, base + end + 2),
             );
             atomicRanges.push(Decoration.mark({}).range(base + i, base + end + 2));
@@ -194,7 +199,7 @@ function build(
             if (resolved) {
               decos.push(
                 Decoration.replace({
-                  widget: new ImageWidget(resolved, alt, base + i, false, ctx),
+                  widget: new ImageWidget(resolved, alt, base + i, false, url.trim().replace(/^<|>$/g, ""), ctx),
                 }).range(base + i, base + end + 1),
               );
               if (end + 1 > i) {
@@ -467,7 +472,11 @@ function build(
       if (n === last) cls.push("swift-codeblock-last");
       addLine(n, cls.join(" "));
       style(line.from, line.to, "swift-code-text");
-      if (n === first) {
+      // The flair is positioned at the end of the first code line. On an
+      // empty line being edited, that is also the caret's anchor, and the
+      // absolutely positioned flair drags the caret to the far right.
+      // Show it once the line has text, or while the caret is elsewhere.
+      if (n === first && (line.length > 0 || !isActive)) {
         decos.push(
           Decoration.widget({
             widget: new CodeFlairWidget(displayLang(fence.lang) || fence.lang, fence.title, fence.code, ctx),
@@ -497,7 +506,7 @@ function build(
       if (resolved) {
         decos.push(
           Decoration.replace({
-            widget: new ImageWidget(resolved, imageOnly[1], line.from, true, ctx),
+            widget: new ImageWidget(resolved, imageOnly[1], line.from, true, url, ctx),
             block: true,
           }).range(line.from, line.to),
         );
@@ -513,7 +522,7 @@ function build(
         const resolved = inlineAssetUrl(target) || options.assetUrl(target);
         decos.push(
           Decoration.replace({
-            widget: new ImageWidget(resolved, alias || target, line.from, true, ctx),
+            widget: new ImageWidget(resolved, alias || target, line.from, true, target, ctx),
             block: true,
           }).range(line.from, line.to),
         );

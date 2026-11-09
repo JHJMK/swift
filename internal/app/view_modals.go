@@ -48,6 +48,59 @@ func (a *app) promptModal(c *ui.Context) {
 	}
 }
 
+// firstDocModal names the first knowledge base and document of a vault
+// that has no knowledge base yet, so both are named as they are made.
+func (a *app) firstDocModal(c *ui.Context) {
+	if a.firstDoc == nil {
+		return
+	}
+	f := a.firstDoc
+	t := c.Theme()
+	open := true
+	submitted := false
+	submit := func() {
+		if err := a.createFirstDoc(); err != nil {
+			f.Err = err.Error()
+			a.update()
+			return
+		}
+		open = false
+		a.update()
+	}
+	ui.Modal(c, &open, func() {
+		ui.Column(c).Width(420).Padding(22).Gap(12).Children(func() {
+			ui.Text(c, "创建第一篇文档").FontSize(17).Bold()
+			ui.Text(c, "还没有知识库。为它和第一篇文档起个名字，之后可以随时重命名。").
+				FontSize(13).TextColor(t.TextMuted)
+			ui.Column(c).Gap(6).Children(func() {
+				ui.Text(c, "知识库名称").FontSize(13).TextColor(t.TextMuted)
+				kb := ui.TextInput(c, &f.KB).Width(372).AutoFocus()
+				submitted = submitted || kb.Submitted()
+			})
+			ui.Column(c).Gap(6).Children(func() {
+				ui.Text(c, "文档标题").FontSize(13).TextColor(t.TextMuted)
+				title := ui.TextInput(c, &f.Title).Width(372)
+				submitted = submitted || title.Submitted()
+			})
+			if f.Err != "" {
+				ui.Text(c, f.Err).FontSize(12).TextColor(t.Danger)
+			}
+			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
+				if ui.Button(c, "取消").Clicked() {
+					a.firstDoc = nil
+					open = false
+				}
+				if ui.PrimaryButton(c, "创建").Clicked() || submitted {
+					submit()
+				}
+			})
+		})
+	})
+	if !open {
+		a.firstDoc = nil
+	}
+}
+
 func (a *app) confirmModal(c *ui.Context) {
 	if a.confirm == nil {
 		return
@@ -125,6 +178,10 @@ func (a *app) settingsModal(c *ui.Context) {
 
 					ui.Box(c).Height(1).Background(t.Border)
 
+					a.pageDisplaySettingsSection(c)
+
+					ui.Box(c).Height(1).Background(t.Border)
+
 					a.syncSettingsSection(c)
 
 					ui.Box(c).Height(1).Background(t.Border)
@@ -167,7 +224,8 @@ func (a *app) settingsModal(c *ui.Context) {
 
 					ui.Column(c).Gap(4).Children(func() {
 						ui.Text(c, "关于").FontSize(13).Bold()
-						ui.Text(c, "语燕 0.1.0 · 纯 Go 桌面应用（MyGo 原生界面）").FontSize(13).TextColor(t.TextMuted)
+						ui.Textf(c, "语燕 %s · 纯 Go 桌面应用（MyGo 原生界面）", appVersion()).
+							FontSize(13).TextColor(t.TextMuted)
 					})
 				})
 			})
@@ -208,6 +266,59 @@ func (a *app) settingsModal(c *ui.Context) {
 		a.settingsOpen = false
 		a.showSyncSecret = false
 	}
+}
+
+// pageDisplaySettingsSection sets the global page display defaults that
+// documents follow unless they override them.
+func (a *app) pageDisplaySettingsSection(c *ui.Context) {
+	t := c.Theme()
+	global := a.defaultPageSettings()
+	choice := func(label string, selected bool, run func()) {
+		b := ui.Button(c, label).Padding(4, 12)
+		if selected {
+			b = b.Background(t.Accent.Alpha(0.12)).TextColor(t.Accent)
+		}
+		if b.Clicked() {
+			run()
+			a.update()
+		}
+	}
+	ui.Column(c).Gap(6).Children(func() {
+		ui.Text(c, "文档显示").FontSize(13).Bold()
+		ui.Text(c, "新文档默认使用这里的行距和字号；单独设置过的文档会覆盖全局默认。").
+			FontSize(12).TextColor(t.TextMuted)
+
+		ui.Text(c, "行间距").FontSize(12).TextColor(t.TextMuted)
+		ui.Row(c).Gap(6).Children(func() {
+			choice("紧凑", global.LineHeight == 1.5, func() {
+				if err := a.saveDefaultPageSettings(PageSettings{LineHeight: 1.5, FontSize: global.FontSize}); err != nil {
+					a.setError(err)
+				}
+			})
+			choice("标准", global.LineHeight == 1.75, func() {
+				if err := a.saveDefaultPageSettings(PageSettings{LineHeight: 1.75, FontSize: global.FontSize}); err != nil {
+					a.setError(err)
+				}
+			})
+			choice("宽松", global.LineHeight == 2, func() {
+				if err := a.saveDefaultPageSettings(PageSettings{LineHeight: 2, FontSize: global.FontSize}); err != nil {
+					a.setError(err)
+				}
+			})
+		})
+
+		ui.Text(c, "默认字体大小").FontSize(12).TextColor(t.TextMuted)
+		ui.Row(c).Gap(6).Children(func() {
+			for _, size := range []float32{14, 15, 16, 18, 20} {
+				size := size
+				choice(fmt.Sprintf("%.0f", size), global.FontSize == size, func() {
+					if err := a.saveDefaultPageSettings(PageSettings{LineHeight: global.LineHeight, FontSize: size}); err != nil {
+						a.setError(err)
+					}
+				})
+			}
+		})
+	})
 }
 
 func (a *app) trashModal(c *ui.Context) {
@@ -488,6 +599,8 @@ func (a *app) pickerModal(c *ui.Context) {
 
 // pageSettingsModal sets the document page's line spacing and default
 // font size. These are display settings; the Markdown is not rewritten.
+// A document starts with the global settings and saves its own once they
+// are changed here.
 func (a *app) pageSettingsModal(c *ui.Context) {
 	if !a.pageSettingsOpen || a.doc == nil || a.doc.Note {
 		return
@@ -495,6 +608,8 @@ func (a *app) pageSettingsModal(c *ui.Context) {
 	doc := a.doc
 	t := c.Theme()
 	open := true
+	global := a.defaultPageSettings()
+	overridden := a.hasPageSettings(doc.Rel)
 	choice := func(label string, selected bool, run func()) {
 		b := ui.Button(c, label).Padding(4, 12)
 		if selected {
@@ -509,7 +624,29 @@ func (a *app) pageSettingsModal(c *ui.Context) {
 	ui.Modal(c, &open, func() {
 		ui.Column(c).Width(440).Padding(22).Gap(14).Children(func() {
 			ui.Text(c, "页面设置").FontSize(18).Bold()
-			ui.Text(c, "只影响页面显示，不改写正文。").FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, "只影响页面显示，不改写正文。").
+				FontSize(12).TextColor(t.TextMuted)
+
+			ui.Column(c).Gap(3).Children(func() {
+				if overridden {
+					ui.Text(c, "此文档使用单独设置，覆盖全局默认。").
+						FontSize(12).TextColor(t.TextMuted)
+				} else {
+					ui.Textf(c, "此文档跟随全局默认（行距 %.2f，字号 %.0f）。",
+						global.LineHeight, global.FontSize).
+						FontSize(12).TextColor(t.TextMuted)
+				}
+				if overridden {
+					ui.Row(c).Children(func() {
+						if ui.Button(c, "恢复为全局默认").Width(150).Clicked() {
+							if err := a.resetPageSettings(doc); err != nil {
+								a.setError(err)
+							}
+							a.update()
+						}
+					})
+				}
+			})
 
 			ui.Text(c, "行间距").FontSize(13).Bold()
 			ui.Row(c).Gap(6).Children(func() {
@@ -525,7 +662,8 @@ func (a *app) pageSettingsModal(c *ui.Context) {
 					choice(fmt.Sprintf("%.0f", size), doc.PageFontSize == size, func() { doc.PageFontSize = size })
 				}
 			})
-			ui.Text(c, "已经写好的内容不会改写；字号作为页面的默认显示大小。").FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, "选择上面的值会为此文档保存单独设置；全局默认在「设置 > 文档显示」中修改。").
+				FontSize(12).TextColor(t.TextMuted)
 
 			ui.Row(c).Justify(ui.End).Children(func() {
 				if ui.PrimaryButton(c, "完成").Clicked() {

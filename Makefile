@@ -6,7 +6,7 @@ MYGO := $(GO) tool mygo
 PLATFORM ?= $(shell $(GO) env GOOS)/$(shell $(GO) env GOARCH)
 
 # Go files outside the generated build output.
-FILES := $(shell find . -name '*.go' -not -path './.mygo/*' -not -path './build/*')
+FILES := $(shell find . -name '*.go' -not -path './.mygo/*' -not -path './build/*' -not -path './vendor/*')
 
 .PHONY: dev run web build test vet fmt check clean
 
