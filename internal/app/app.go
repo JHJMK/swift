@@ -61,9 +61,10 @@ type docState struct {
 	// app reads where it is and does not write.
 	ReadOnly bool
 
-	// mermaidPreviews are the rendered diagrams shown above their source;
-	// they are left out of the Markdown written.
-	mermaidPreviews map[string]bool
+	// codeFences keeps the language and title of the fenced code blocks,
+	// by paragraph ID: the editor carries the text, not Markdown's info
+	// string, so the app puts it back when it saves.
+	codeFences map[string]codeFenceInfo
 
 	// externalConflict and externalDeleted remember that the file on disk
 	// was changed or removed while the page had unsaved edits, so the
@@ -197,7 +198,6 @@ type app struct {
 	// focusBody puts the caret at the start of the text after a title is
 	// entered.
 	focusBody   bool
-	focusTitle  bool
 	toast       string
 	toastUntil  time.Time
 	lakebookJob *lakebookImportJob
@@ -214,16 +214,11 @@ type app struct {
 	syncNote         syncNote
 	syncResult       *syncResultState
 	showSyncSecret   bool
-	codeTitleEditing int
 	sidebarCollapsed bool
 	treeCollapsed    bool
 	kbRailOpen       bool
-	codeTitleFocus   bool
-	codeTitleFocused bool
 	syncRetryPending bool
 	refocusEditor    bool
-	mermaidRefresh   bool
-	mermaidEditing   int
 	quitting         bool
 
 	// The Obsidian-style document page is a web view.
@@ -332,9 +327,6 @@ func (a *app) update() {
 func (a *app) openDoc(rel string) {
 	a.allKBs = false
 	a.findOpen = false
-	a.codeTitleEditing = 0
-	a.codeTitleFocus = false
-	a.codeTitleFocused = false
 	if a.doc != nil && a.doc.Rel == rel {
 		a.selected = rel
 		a.selectedIsDir = false
@@ -352,22 +344,26 @@ func (a *app) openDoc(rel string) {
 	if strings.TrimSpace(md) == "" {
 		text = richtext.NewText("")
 	}
-	var previews map[string]bool
 	saved := md
+	var fences map[string]codeFenceInfo
+	var document *richtext.Document
 	if !web {
 		text = a.loadImages(text, rel)
-		text, previews = a.addMermaidPreviews(text, rel)
-		saved = text.Markdown()
+		text, fences = a.annotateCodeFences(text, md)
+		document = a.newNativeDocument(text)
+		saved = nativeMarkdown(document.Text(), fences)
+	} else {
+		document = richtext.NewDocument(text)
 	}
 	a.doc = &docState{
-		Rel:             rel,
-		Title:           titleOf(rel),
-		Doc:             richtext.NewDocument(text),
-		Saved:           saved,
-		Markdown:        md,
-		Web:             web,
-		MTime:           mtime,
-		mermaidPreviews: previews,
+		Rel:        rel,
+		Title:      titleOf(rel),
+		Doc:        document,
+		Saved:      saved,
+		Markdown:   md,
+		Web:        web,
+		MTime:      mtime,
+		codeFences: fences,
 	}
 	a.previewMode = false
 	a.loadPageSettings(a.doc)
@@ -452,7 +448,7 @@ func (a *app) flushDoc() {
 	}
 	md := doc.Markdown
 	if !doc.Web {
-		md = doc.Doc.Text().Markdown()
+		md = nativeMarkdown(doc.Doc.Text(), doc.codeFences)
 	}
 	if md == doc.Saved && !doc.Note {
 		doc.Dirty = false
@@ -480,9 +476,6 @@ func (a *app) flushDoc() {
 			a.sendWebStatus("saved", "已保存")
 		}
 		return
-	}
-	if !doc.Web && len(doc.mermaidPreviews) > 0 {
-		md = stripMermaidPreviews(md, doc.mermaidPreviews)
 	}
 	mtime, err := a.vault.WriteDoc(doc.Rel, md)
 	if err != nil {
@@ -838,9 +831,6 @@ func (a *app) openNote() {
 		return
 	}
 	a.allKBs = false
-	a.codeTitleEditing = 0
-	a.codeTitleFocus = false
-	a.codeTitleFocused = false
 	a.flushTitle()
 	a.flushDoc()
 	title, body, err := a.vault.ReadNote()
@@ -856,18 +846,26 @@ func (a *app) openNote() {
 	if strings.TrimSpace(body) == "" {
 		text = richtext.NewText("")
 	}
+	var fences map[string]codeFenceInfo
+	var document *richtext.Document
 	saved := body
-	if !web {
+	if web {
+		document = richtext.NewDocument(text)
+	} else {
 		text = a.loadImages(text, "")
+		text, fences = a.annotateCodeFences(text, body)
+		document = a.newNativeDocument(text)
+		saved = nativeMarkdown(document.Text(), fences)
 	}
 	a.doc = &docState{
-		Note:     true,
-		Title:    title,
-		Doc:      richtext.NewDocument(text),
-		Saved:    saved,
-		Markdown: body,
-		Web:      web,
-		MTime:    time.Now(),
+		Note:       true,
+		Title:      title,
+		Doc:        document,
+		Saved:      saved,
+		Markdown:   body,
+		Web:        web,
+		MTime:      time.Now(),
+		codeFences: fences,
 	}
 	a.previewMode = false
 	a.loadPageSettings(a.doc)
@@ -919,9 +917,9 @@ func (a *app) saveNoteTo(rel string) error {
 	if title == "" {
 		title = "小记"
 	}
-	md := a.doc.Doc.Text().Markdown()
-	if a.doc.Web {
-		md = a.doc.Markdown
+	md := a.doc.Markdown
+	if !a.doc.Web {
+		md = nativeMarkdown(a.doc.Doc.Text(), a.doc.codeFences)
 	}
 	dir, err := a.pickerDir(rel)
 	if err != nil {
@@ -1978,11 +1976,9 @@ func (a *app) writeMarkdownZip(dst, title string) error {
 		return errors.New("没有打开的文档")
 	}
 	a.flushDoc()
-	md := a.doc.Doc.Text().Markdown()
-	if a.doc.Web {
-		md = a.doc.Markdown
-	} else if len(a.doc.mermaidPreviews) > 0 {
-		md = stripMermaidPreviews(md, a.doc.mermaidPreviews)
+	md := a.doc.Markdown
+	if !a.doc.Web {
+		md = nativeMarkdown(a.doc.Doc.Text(), a.doc.codeFences)
 	}
 	tmp, err := os.MkdirTemp("", "swift-markdown-")
 	if err != nil {

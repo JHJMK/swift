@@ -13,13 +13,6 @@ type dragItem struct {
 
 func (a *app) view(c *ui.Context) {
 	a.finishLakebookImport()
-	if a.mermaidRefresh && !a.isWebDoc() {
-		a.mermaidRefresh = false
-		a.reloadForMermaid()
-	}
-	if a.doc != nil && !a.isWebDoc() {
-		a.syncMermaidVisibility()
-	}
 	a.applyTheme(c)
 	if result := a.syncNote.takeResult(); result != nil {
 		a.syncResult = result

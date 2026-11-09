@@ -159,7 +159,7 @@ Windows 和 Linux 上把 `⌘` 换成 `Ctrl`。完整列表见[快捷键与技�
 ### 技术栈
 
 - **语言**：Go 1.27.3+，无 cgo。
-- **桌面框架**：[MyGo](https://github.com/egoist/mygo) 0.7.4，原生 UI + 系统 WebView。
+- **桌面框架**：[MyGo](https://github.com/egoist/mygo) 0.8.3，原生 UI + 系统 WebView。
 - **文档编辑器**：TypeScript + CodeMirror 6 + Vite，构建后嵌入 Go 二进制。
 - **图表**：Mermaid（Web 编辑器内置）。
 - **导入/导出**：Lakebook 归档解析、Markdown、DOCX、PDF。

@@ -203,7 +203,7 @@ func unstyle(s *ParagraphStyle) {
 	case s.Quote:
 		s.Quote = false
 	case s.CodeBlock:
-		s.CodeBlock, s.CodeBlockID = false, 0
+		s.CodeBlock = false
 	case s.Indent > 0:
 		s.Indent--
 	}
@@ -227,6 +227,8 @@ func (v *view) enter() {
 				s.List, s.Checked = NoList, false
 			case s.Quote:
 				s.Quote = false
+			case s.CodeBlock && p > 0 && v.para(p-1).style.CodeBlock:
+				s.CodeBlock = false
 			default:
 				return false
 			}
@@ -240,13 +242,9 @@ func (v *view) enter() {
 	}
 	if !v.opts.NoMarkdown && a == z && v.caret == pe && !st.CodeBlock {
 		if line := v.lineOf(p); strings.HasPrefix(line, "```") && !strings.Contains(line[3:], "`") {
-			language, title := parseFenceInfo(line[3:])
 			v.edit(func(e *Edit) {
 				e.ReplaceString(ps, pe, "", Attributes{})
-				e.FormatParagraphs(ps, ps, func(s *ParagraphStyle) {
-					*s = ParagraphStyle{CodeBlock: true, Indent: s.Indent, ID: s.ID, CodeBlockID: newCodeBlockID(),
-						Language: language, CodeBlockTitle: title}
-				})
+				e.FormatParagraphs(ps, ps, func(s *ParagraphStyle) { *s = ParagraphStyle{CodeBlock: true, Indent: s.Indent, ID: s.ID} })
 				e.Select(ps, ps)
 			})
 			return
@@ -281,22 +279,6 @@ func (v *view) enter() {
 	d.typing = &keep
 	d.mu.Unlock()
 	v.coalesce = false
-}
-
-// exitCodeBlock leaves the block of code at the caret: Cmd+Enter inserts a
-// normal paragraph after it. Enter itself always keeps the block, so blank
-// lines inside code stay code.
-func (v *view) exitCodeBlock() {
-	p := v.shown.paraAt(v.caret)
-	if p < 0 || !v.para(p).style.CodeBlock {
-		return
-	}
-	v.enter()
-	v.command(func(d *Document) {
-		d.FormatParagraphs(func(s *ParagraphStyle) {
-			s.CodeBlock, s.Language, s.CodeBlockID, s.CodeBlockTitle = false, "", 0, ""
-		})
-	})
 }
 
 // typed runs the Markdown shortcuts after s was typed at the caret.

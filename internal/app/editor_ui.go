@@ -3,7 +3,6 @@ package app
 import (
 	"fmt"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/egoist/mygo"
@@ -433,10 +432,6 @@ func (a *app) editorToolbar(c *ui.Context, doc *docState) {
 				})
 			}
 		})
-		if f.Paragraph.CodeBlock {
-			gap()
-			a.codeBlockLanguageToolbar(c, doc, f.Paragraph.CodeBlockID, f.Paragraph.Language)
-		}
 		gap()
 		textBtn("B", "加粗（⌘B）", f.Bold == richtext.FormatOn, func(e ui.Element) ui.Element { return e.Bold() }, doc.Doc.ToggleBold)
 		textBtn("I", "斜体（⌘I）", f.Italic == richtext.FormatOn, func(e ui.Element) ui.Element { return e.Italic() }, doc.Doc.ToggleItalic)
@@ -566,12 +561,8 @@ func (a *app) insertCommands(doc *docState, close func()) []insertCommand {
 		{Label: "任务列表", Hint: "可勾选的事项", Enabled: true, Run: func() { apply(func() { doc.Doc.ToggleList(richtext.Tasks) }) }},
 		{Label: "引用", Hint: "引用一段话", Enabled: true, Run: func() { apply(func() { doc.Doc.ToggleQuote() }) }},
 		{Label: "代码块", Hint: "Enter 换行，⌘Enter 退出", Enabled: true, Run: func() { apply(func() { doc.Doc.ToggleCodeBlock() }) }},
-		{Label: "Mermaid 图表", Hint: "兼容导入的旧文档", Enabled: true, Run: func() {
-			apply(func() {
-				doc.Doc.FormatParagraphs(func(p *richtext.ParagraphStyle) {
-					p.CodeBlock, p.Language = true, "mermaid"
-				})
-			})
+		{Label: "Mermaid 图表", Hint: "插入 Mermaid 代码块", Enabled: true, Run: func() {
+			apply(func() { a.markMermaidBlock(doc) })
 		}},
 		{Label: "图片", Hint: "从文件插入图片", Icon: iconDownload, Enabled: true, Run: func() { a.insertImage() }},
 		{Label: "附件", Hint: "从文件插入附件", Group: "基础", Icon: iconFile, Enabled: true, Run: func() { a.insertAttachment() }},
@@ -589,9 +580,7 @@ func (a *app) slashCommands(doc *docState, close func()) []insertCommand {
 	return []insertCommand{
 		{Label: "附件", Hint: "从文件插入附件", Group: "基础", Icon: iconFile, Enabled: true, Run: func() { a.insertAttachment() }},
 		{Label: "Mermaid 图表", Hint: "把当前段落变成 Mermaid 代码块", Group: "绘图", Enabled: true, Run: func() {
-			doc.Doc.FormatParagraphs(func(p *richtext.ParagraphStyle) {
-				p.CodeBlock, p.Language = true, "mermaid"
-			})
+			a.markMermaidBlock(doc)
 			a.markDocDirty()
 			a.update()
 		}},
@@ -673,17 +662,11 @@ func (a *app) editorFooter(c *ui.Context) {
 	})
 }
 
-// copyCodeBlock puts a block of code on the clipboard.
-func (a *app) copyCodeBlock(code string) {
-	mygo.Clipboard.WriteText(code)
-	a.toast = "复制成功"
-	a.toastUntil = time.Now().Add(time.Second)
-	a.update()
-	deadline := a.toastUntil
-	time.AfterFunc(time.Second, func() {
-		if a.toastUntil.Equal(deadline) {
-			a.toast = ""
-			a.update()
-		}
-	})
+// paraText returns a paragraph's text, for outlines and checks.
+func paraText(p richtext.Paragraph) string {
+	var b strings.Builder
+	for _, r := range p.Runs {
+		b.WriteString(r.Text)
+	}
+	return b.String()
 }

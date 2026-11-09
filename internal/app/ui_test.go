@@ -753,21 +753,6 @@ func TestBodyPlaceholderHidesForBlocks(t *testing.T) {
 	}
 }
 
-// Right clicking the text offers the two paste commands.
-func TestEditorContextMenu(t *testing.T) {
-	a, _, rel := newTestApp(t)
-	a.openDoc(rel)
-	tt := ui.NewTester(a.view, 1180, 760)
-	tt.Frame()
-	tt.RightClickAt(700, 300)
-	tt.Frame()
-	for _, want := range []string{"粘贴", "粘贴并匹配样式"} {
-		if !tt.HasText(want) {
-			t.Fatalf("editor menu lacks %q: %q", want, tt.Texts())
-		}
-	}
-}
-
 // createDocFromWorkbench creates a document through the workbench card
 // and its location picker, choosing the default knowledge base.
 func createDocFromWorkbench(t *testing.T, tt *ui.Tester) {

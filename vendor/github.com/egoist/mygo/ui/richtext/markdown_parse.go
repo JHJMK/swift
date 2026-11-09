@@ -53,11 +53,6 @@ func (m *mdReader) block(i int, st ParagraphStyle, depth int) {
 		m.inlinePara(st, m.d.Inlines(i), Attributes{})
 	case parser.CodeBlock:
 		st.CodeBlock, st.Heading = true, 0
-		st.CodeBlockID = newCodeBlockID()
-		st.Language, st.CodeBlockTitle = "", ""
-		if b.Fenced {
-			st.Language, st.CodeBlockTitle = parseFenceInfo(b.Info())
-		}
 		n := m.d.LineCount(i)
 		for k := range n {
 			line, _ := m.d.Line(i, k)

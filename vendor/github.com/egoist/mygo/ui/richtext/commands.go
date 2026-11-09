@@ -2,7 +2,6 @@ package richtext
 
 import (
 	"strings"
-	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -240,7 +239,6 @@ func (d *Document) SetHeading(level int) {
 		p.Heading = max(0, min(level, 6))
 		if p.Heading > 0 {
 			p.List, p.Checked, p.CodeBlock = NoList, false, false
-			p.CodeBlockID, p.Language, p.CodeBlockTitle = 0, "", ""
 		}
 	})
 }
@@ -257,7 +255,6 @@ func (d *Document) ToggleList(kind ListKind) {
 			return
 		}
 		p.List, p.Heading, p.CodeBlock = kind, 0, false
-		p.CodeBlockID, p.Language, p.CodeBlockTitle = 0, "", ""
 		if kind != Tasks {
 			p.Checked = false
 		}
@@ -277,65 +274,12 @@ func (d *Document) ToggleCodeBlock() {
 	d.lock()
 	defer d.mu.Unlock()
 	off := d.paragraphsAll(func(p ParagraphStyle) bool { return p.CodeBlock })
-	id := 0
-	if !off {
-		id = newCodeBlockID()
-	}
 	d.formatParagraphs(func(p *ParagraphStyle) {
 		p.CodeBlock = !off
 		if p.CodeBlock {
 			p.Heading, p.List, p.Checked = 0, NoList, false
-			p.CodeBlockID, p.Language, p.CodeBlockTitle = id, "", ""
-		} else {
-			p.CodeBlockID, p.Language, p.CodeBlockTitle = 0, "", ""
 		}
 	})
-}
-
-// SetCodeBlockTitle sets the title of the block of code with id, for all
-// the paragraphs of the block, as its header edits it.
-func (d *Document) SetCodeBlockTitle(id int, title string) {
-	d.formatCodeBlock(id, func(p *ParagraphStyle) { p.CodeBlockTitle = title })
-}
-
-// SetCodeBlockLanguage sets the language of the block of code with id,
-// which its header chooses, and which its Markdown fence keeps.
-func (d *Document) SetCodeBlockLanguage(id int, language string) {
-	d.formatCodeBlock(id, func(p *ParagraphStyle) { p.Language = language })
-}
-
-// formatCodeBlock changes the style of every paragraph of the block of
-// code with id, leaving the selection as it was.
-func (d *Document) formatCodeBlock(id int, fn func(*ParagraphStyle)) {
-	d.lock()
-	defer d.mu.Unlock()
-	start, end, ok := d.codeBlockSpan(id)
-	if !ok {
-		return
-	}
-	anchor, caret, typing := d.anchor, d.caret, d.typing
-	d.edit(false, func(e *Edit) { e.FormatParagraphs(start, end, fn) })
-	d.anchor, d.caret, d.typing = anchor, caret, typing
-}
-
-// codeBlockSpan returns the runes of the block of code with id, from its
-// first paragraph to its last.
-func (d *Document) codeBlockSpan(id int) (start, end int, ok bool) {
-	start = -1
-	for off, p := range d.text.Paragraphs() {
-		if !p.Style.CodeBlock || p.Style.CodeBlockID != id {
-			continue
-		}
-		if start < 0 {
-			start, ok = off, true
-		}
-		n := 0
-		for _, r := range p.Runs {
-			n += utf8.RuneCountInString(r.Text)
-		}
-		end = off + n
-	}
-	return start, end, ok
 }
 
 // maxIndent is the deepest a paragraph indents.
@@ -412,102 +356,4 @@ func normalizeNewlines(s string) string {
 		return s
 	}
 	return strings.NewReplacer("\r\n", "\n", "\r", "\n", " ", "\n").Replace(s)
-}
-
-// DeleteCodeBlockByID deletes the block of code with id, with all its
-// lines. It is the header's delete control, and undoes as the other edits
-// do.
-func (d *Document) DeleteCodeBlockByID(id int) {
-	d.lock()
-	defer d.mu.Unlock()
-	start, _, ok := d.codeBlockSpan(id)
-	if ok {
-		d.deleteCodeBlockAt(start)
-	}
-}
-
-// DeleteCodeBlock deletes the block of code at the caret, with all of its
-// lines, keeping the surrounding paragraphs.
-func (d *Document) DeleteCodeBlock() {
-	d.lock()
-	defer d.mu.Unlock()
-	d.deleteCodeBlockAt(d.caret)
-}
-
-// DeleteCodeBlockAt deletes the block of code at rune pos.
-func (d *Document) DeleteCodeBlockAt(pos int) {
-	d.lock()
-	defer d.mu.Unlock()
-	d.deleteCodeBlockAt(pos)
-}
-
-// DeleteCodeBlockAtIndex deletes the block of code whose paragraph is
-// index.
-func (d *Document) DeleteCodeBlockAtIndex(index int) {
-	d.lock()
-	defer d.mu.Unlock()
-	d.deleteCodeBlockParagraph(index)
-}
-
-// deleteCodeBlockAt deletes the block of code at pos; the caller holds the
-// lock.
-func (d *Document) deleteCodeBlockAt(pos int) bool {
-	return d.deleteCodeBlockParagraph(d.text.paraAt(pos))
-}
-
-// deleteCodeBlockParagraph deletes the block of code of paragraph p; the
-// caller holds the lock. It works from the paragraph itself, not from a
-// rune position: the start of an empty block is also the end of the
-// paragraph above it, where a rune lookup would find that block.
-func (d *Document) deleteCodeBlockParagraph(p int) bool {
-	if p < 0 || p >= d.text.ParagraphCount() {
-		return false
-	}
-	st := seqAt(d.text.seq(), p).style
-	if !st.CodeBlock {
-		return false
-	}
-	d.blockFocus = 0
-	p0 := p
-	for p0 > 0 {
-		prev := seqAt(d.text.seq(), p0-1).style
-		if !prev.CodeBlock || prev.CodeBlockID != st.CodeBlockID {
-			break
-		}
-		p0--
-	}
-	count := d.text.ParagraphCount()
-	p1 := p
-	for p1+1 < count {
-		next := seqAt(d.text.seq(), p1+1).style
-		if !next.CodeBlock || next.CodeBlockID != st.CodeBlockID {
-			break
-		}
-		p1++
-	}
-	start := d.text.paraStart(p0)
-	end := d.text.paraStart(p1)
-	_, end = d.text.ParagraphRange(end)
-	if p0 == 0 && p1+1 >= count {
-		// The block is the whole page: leave one normal paragraph.
-		d.edit(false, func(e *Edit) {
-			e.ReplaceString(0, d.text.Len(), "", Attributes{})
-			e.FormatParagraphs(0, 0, func(s *ParagraphStyle) {
-				s.CodeBlock, s.Language, s.CodeBlockID, s.CodeBlockTitle = false, "", 0, ""
-			})
-			e.Select(0, 0)
-		})
-		return true
-	}
-	removeStart, removeEnd := start, end
-	if p0 > 0 {
-		removeStart = start - 1
-	} else {
-		removeEnd = end + 1
-	}
-	d.edit(false, func(e *Edit) {
-		e.ReplaceString(removeStart, removeEnd, "", Attributes{})
-		e.Select(removeStart, removeStart)
-	})
-	return true
 }
