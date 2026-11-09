@@ -83,6 +83,7 @@ const els = {
   title: $("title"),
   editor: $("editor"),
   outline: $("outline"),
+  outlineResizer: $("outline-resizer"),
   outlineList: $("outline-list"),
   status: $("status"),
   statusState: $("status-state"),
@@ -103,6 +104,10 @@ let saveStateTimer = 0;
 let countTimer = 0;
 let outlineTimer = 0;
 let toastTimer = 0;
+let outlineWidth = 240;
+let outlineResizePointer: number | null = null;
+let outlineResizeStartX = 0;
+let outlineResizeStartWidth = 0;
 let slashOpen = false;
 let slashStart = 0;
 let slashItems: SlashItem[] = [];
@@ -568,6 +573,16 @@ function applySettings(settingsValue: SettingsPayload) {
   els.page.classList.toggle("is-readable-line-width", settings.readableLineWidth);
 }
 
+function clampOutlineWidth(width: number): number {
+  if (!Number.isFinite(width) || width <= 0) return 240;
+  return Math.min(Math.max(width, 180), 420);
+}
+
+function applyOutlineWidth(width: number) {
+  outlineWidth = clampOutlineWidth(width);
+  document.documentElement.style.setProperty("--outline-width", `${outlineWidth}px`);
+}
+
 function openDocument(payload: OpenPayload) {
   loading = true;
   closeSlash();
@@ -586,7 +601,9 @@ function openDocument(payload: OpenPayload) {
   setTitle(payload.title);
   const modeText = previewMode ? "预览" : payload.readOnly ? "只读" : "已保存";
   setStatus(modeText, previewMode || payload.readOnly ? "readonly" : "saved");
+  applyOutlineWidth(payload.outlineWidth);
   els.outline.hidden = !payload.outlineOpen;
+  els.outlineResizer.hidden = !payload.outlineOpen;
   view.setState(makeEditorState(payload.content));
   setReadOnly(payload.readOnly);
   loading = false;
@@ -632,9 +649,15 @@ function revealCursorSoon() {
 function revealPosition(pos: number) {
   window.requestAnimationFrame(() => {
     const coords = view.coordsAtPos(pos);
-    if (!coords) return;
     const rect = els.scroller.getBoundingClientRect();
     const margin = 60;
+    if (!coords) {
+      // In preview mode CodeMirror cannot scroll its own overflow-visible
+      // scroller when the selection is outside the rendered viewport.
+      const block = view.lineBlockAt(pos);
+      els.scroller.scrollTop += view.documentTop + block.top - (rect.top + margin);
+      return;
+    }
     if (coords.top < rect.top + margin) {
       els.scroller.scrollTop -= rect.top + margin - coords.top;
     } else if (coords.bottom > rect.bottom - margin) {
@@ -1338,8 +1361,41 @@ function renderOutline() {
 
 function setOutlineOpen(open: boolean) {
   els.outline.hidden = !open;
+  els.outlineResizer.hidden = !open;
   if (open) renderOutline();
 }
+
+els.outlineResizer.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0 || els.outline.hidden) return;
+  event.preventDefault();
+  outlineResizePointer = event.pointerId;
+  outlineResizeStartX = event.clientX;
+  outlineResizeStartWidth = els.outline.getBoundingClientRect().width;
+  els.outlineResizer.setPointerCapture(event.pointerId);
+  document.body.classList.add("is-resizing-outline");
+});
+
+els.outlineResizer.addEventListener("pointermove", (event) => {
+  if (outlineResizePointer !== event.pointerId) return;
+  event.preventDefault();
+  applyOutlineWidth(outlineResizeStartWidth - (event.clientX - outlineResizeStartX));
+});
+
+function finishOutlineResize(event: PointerEvent) {
+  if (outlineResizePointer !== event.pointerId) return;
+  const pointerId = outlineResizePointer;
+  outlineResizePointer = null;
+  document.body.classList.remove("is-resizing-outline");
+  if (els.outlineResizer.hasPointerCapture(pointerId)) {
+    els.outlineResizer.releasePointerCapture(pointerId);
+  }
+  void bridge.call<void>(`${SERVICE}.SetOutlineWidth`, outlineWidth).catch((err) => {
+    console.warn("outline width save failed", err);
+  });
+}
+
+els.outlineResizer.addEventListener("pointerup", finishOutlineResize);
+els.outlineResizer.addEventListener("pointercancel", finishOutlineResize);
 
 // ---------------------------------------------------------------- slash menu
 
@@ -1705,6 +1761,7 @@ flowchart LR
       lineHeight: 1.75,
       readableLineWidth: false,
       outlineOpen: false,
+      outlineWidth: 240,
       savedAt: "",
     } satisfies OpenPayload);
   }, 0);

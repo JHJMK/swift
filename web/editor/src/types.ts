@@ -9,6 +9,7 @@ export interface OpenPayload {
   lineHeight: number;
   readableLineWidth: boolean;
   outlineOpen: boolean;
+  outlineWidth: number;
   savedAt: string;
   message?: string;
 }

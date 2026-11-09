@@ -12,3 +12,4 @@ mygo_windows_*.syso
 /web/editor/.vite/
 AGENTS.md
 .gitlab-ci.yaml
+/deploy/

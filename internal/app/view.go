@@ -429,7 +429,7 @@ func (a *app) lakebookImportRow(c *ui.Context) {
 // kbPanel is the knowledge base's own column: its tree and home.
 func (a *app) kbPanel(c *ui.Context, kb *Node) {
 	t := c.Theme()
-	ui.Column(c).Width(220).Shrink(0).Background(t.Surface).
+	ui.Column(c).Width(a.fileTreeWidth()).Shrink(0).Background(t.Surface).
 		BorderWidth(0, 1, 0, 0).BorderColor(t.Border).Children(func() {
 		ui.Row(c).Padding(topInset+12, 12, 12, 12).Gap(4).AlignItems(ui.Center).DragWindow().Children(func() {
 			ui.Text(c, kb.Title()).FontSize(16).Bold().SingleLine().Grow(1)
@@ -511,7 +511,32 @@ func (a *app) kbPanel(c *ui.Context, kb *Node) {
 				a.treeRows(c, kb.Children, 0)
 			})
 		})
+
+		a.fileTreeResizer(c)
 	})
+}
+
+// fileTreeResizer is the draggable edge between the knowledge base tree
+// and the document area.
+func (a *app) fileTreeResizer(c *ui.Context) {
+	t := c.Theme()
+	edge := ui.Box(c).Absolute().Top(0).Bottom(0).Right(-3).Width(7).
+		Role(ui.RoleSplitter).Label("调整文件树宽度").Cursor(ui.CursorResizeEW)
+	if edge.Hovered() || edge.Pressed() {
+		edge.Background(t.Accent.Alpha(0.28))
+	}
+	if dx, _, held := edge.Dragged(); held && dx != 0 {
+		width := clampPanelWidth(a.fileTreeWidth()+dx, defaultFileTreeWidth, minFileTreeWidth, maxFileTreeWidth)
+		if width != a.fileTreeWidth() {
+			a.cfg.FileTreeWidth = width
+			a.update()
+		}
+	}
+	if _, _, done := edge.DragEnded(); done {
+		if err := saveConfig(a.cfg); err != nil {
+			a.setError(err)
+		}
+	}
 }
 
 // treeRows builds the rows of a knowledge base's tree, and the rows of the

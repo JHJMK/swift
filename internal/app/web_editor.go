@@ -30,6 +30,7 @@ type webEditorOpen struct {
 	LineHeight        float32 `json:"lineHeight"`
 	ReadableLineWidth bool    `json:"readableLineWidth"`
 	OutlineOpen       bool    `json:"outlineOpen"`
+	OutlineWidth      float32 `json:"outlineWidth"`
 	SavedAt           string  `json:"savedAt"`
 }
 
@@ -122,6 +123,13 @@ func (s *webEditorService) Rename(_ context.Context, id, title string) (webEdito
 // SetFocused keeps Edit > Paste in step with the page's focus.
 func (s *webEditorService) SetFocused(_ context.Context, focused bool) {
 	mygo.RunOnMain(func() { s.a.setEditorFocused(focused) })
+}
+
+// SetOutlineWidth stores the width the page's outline was dragged to.
+func (s *webEditorService) SetOutlineWidth(_ context.Context, width float32) error {
+	var err error
+	mygo.RunOnMain(func() { err = s.a.setOutlineWidth(width) })
+	return err
 }
 
 // InsertImageData writes an image pasted or dropped on the page.
@@ -239,6 +247,7 @@ func (a *app) sendWebOpen() {
 		LineHeight:        lineHeight,
 		ReadableLineWidth: a.narrowMode,
 		OutlineOpen:       a.outlineOpen,
+		OutlineWidth:      a.outlineWidth(),
 		SavedAt:           savedAt,
 	}
 	a.webSentID = payload.ID

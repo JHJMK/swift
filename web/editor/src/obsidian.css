@@ -1086,14 +1086,46 @@ button {
   position: relative;
   z-index: 4;
   display: flex;
-  flex: 0 0 240px;
+  flex: 0 0 var(--outline-width, 240px);
   flex-direction: column;
-  width: 240px;
+  width: var(--outline-width, 240px);
   min-height: 0;
   padding: 14px 8px;
   border-left: 1px solid var(--background-modifier-border);
   background: var(--background-secondary);
   overflow-y: auto;
+}
+
+.outline-resizer {
+  position: absolute;
+  top: 0;
+  right: var(--outline-width, 240px);
+  bottom: 0;
+  z-index: 5;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  transform: translateX(4px);
+}
+
+.outline-resizer::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  background: transparent;
+  content: "";
+}
+
+.outline-resizer:hover::after,
+body.is-resizing-outline .outline-resizer::after {
+  background: var(--interactive-accent);
+}
+
+body.is-resizing-outline {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .outline-head {
@@ -1240,6 +1272,7 @@ button {
 
   .status-bar,
   .outline,
+  .outline-resizer,
   .code-block-flair,
   .swift-embed-hint {
     display: none !important;

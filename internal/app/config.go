@@ -12,11 +12,25 @@ import (
 // can be moved.
 type Config struct {
 	Workspace string `json:"workspace"`
+	// FileTreeWidth is the width of the knowledge base tree.
+	FileTreeWidth float32 `json:"fileTreeWidth,omitempty"`
+	// OutlineWidth is the width of the web editor's outline.
+	OutlineWidth float32 `json:"outlineWidth,omitempty"`
 	// PageSettings are the display settings of documents, by rel.
 	PageSettings map[string]PageSettings `json:"pageSettings,omitempty"`
 	// Sync is the remote the vault is mirrored to, if any.
 	Sync remote.Settings `json:"sync,omitempty"`
 }
+
+const (
+	defaultFileTreeWidth = float32(220)
+	minFileTreeWidth     = float32(180)
+	maxFileTreeWidth     = float32(360)
+
+	defaultOutlineWidth = float32(240)
+	minOutlineWidth     = float32(180)
+	maxOutlineWidth     = float32(420)
+)
 
 // PageSettings are a document page's display settings. They do not
 // change its Markdown.
@@ -71,4 +85,37 @@ func saveConfig(cfg *Config) error {
 	}
 	// The file may hold S3 keys, so only this user reads it.
 	return os.Chmod(p, 0o600)
+}
+
+func (a *app) fileTreeWidth() float32 {
+	if a.cfg == nil {
+		return defaultFileTreeWidth
+	}
+	return clampPanelWidth(a.cfg.FileTreeWidth, defaultFileTreeWidth, minFileTreeWidth, maxFileTreeWidth)
+}
+
+func (a *app) outlineWidth() float32 {
+	if a.cfg == nil {
+		return defaultOutlineWidth
+	}
+	return clampPanelWidth(a.cfg.OutlineWidth, defaultOutlineWidth, minOutlineWidth, maxOutlineWidth)
+}
+
+func (a *app) setOutlineWidth(width float32) error {
+	if a.cfg == nil {
+		return nil
+	}
+	width = clampPanelWidth(width, defaultOutlineWidth, minOutlineWidth, maxOutlineWidth)
+	if a.cfg.OutlineWidth == width {
+		return nil
+	}
+	a.cfg.OutlineWidth = width
+	return saveConfig(a.cfg)
+}
+
+func clampPanelWidth(width, fallback, minWidth, maxWidth float32) float32 {
+	if width <= 0 {
+		return fallback
+	}
+	return min(max(width, minWidth), maxWidth)
 }
