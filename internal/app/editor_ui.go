@@ -63,10 +63,13 @@ func (a *app) docTopBar(c *ui.Context, doc *docState) {
 			}
 			a.update()
 		}
-		preview := a.chromeIconButton(c, iconEye, "预览", false)
+		previewIcon := iconEye
+		previewTip := "预览"
 		if a.previewMode {
-			preview = a.chromeIconButton(c, iconPencil, "编辑", true)
+			previewIcon = iconPencil
+			previewTip = "编辑"
 		}
+		preview := a.chromeIconButton(c, previewIcon, previewTip, a.previewMode)
 		if preview.Clicked() {
 			a.previewMode = !a.previewMode
 			if a.isWebDoc() {
