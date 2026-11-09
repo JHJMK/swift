@@ -44,7 +44,13 @@ import {
   outlineHeadings,
   parseFences,
 } from "./markdown";
-import { attachView, livePreview, refreshPreview, reloadMermaid } from "./live-preview";
+import {
+  attachView,
+  holdCodeFences,
+  livePreview,
+  refreshPreview,
+  reloadMermaid,
+} from "./live-preview";
 import type {
   AttachmentResult,
   CommandPayload,
@@ -412,6 +418,39 @@ els.editor.addEventListener("click", (event) => {
 });
 
 els.editor.addEventListener("paste", handlePaste, true);
+
+// Keep collapsed fences from moving text under the pointer while selecting.
+// Plain clicks still expand a fence after mouseup.
+let holdingCodeFences = false;
+els.editor.addEventListener(
+  "mousedown",
+  (event) => {
+    if (event.button !== 0 || previewMode || readOnly) return;
+    const target = event.target as HTMLElement | null;
+    let codeLine = target?.closest<HTMLElement>(".swift-codeblock-line") ?? null;
+    while (codeLine && !codeLine.classList.contains("swift-codeblock-first")) {
+      const previous = codeLine.previousElementSibling;
+      codeLine = previous instanceof HTMLElement ? previous.closest(".swift-codeblock-line") : null;
+    }
+    if (!codeLine?.previousElementSibling?.classList.contains("swift-fence-spacer")) return;
+    holdingCodeFences = true;
+    view.dispatch({ effects: holdCodeFences.of(true) });
+  },
+  true,
+);
+
+window.addEventListener(
+  "mouseup",
+  () => {
+    if (!holdingCodeFences) return;
+    window.setTimeout(() => {
+      if (!view.state.selection.main.empty) return;
+      holdingCodeFences = false;
+      view.dispatch({ effects: holdCodeFences.of(false) });
+    }, 0);
+  },
+  true,
+);
 
 // The collapsed ``` lines are part of the code block's padding. A click
 // there enters the code block instead of putting the caret in the fence.

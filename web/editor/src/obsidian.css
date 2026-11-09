@@ -454,6 +454,11 @@ button {
   background-color: var(--text-selection) !important;
 }
 
+.cm-selectionLayer {
+  z-index: 0 !important;
+  pointer-events: none;
+}
+
 /* Paragraph rhythm and inline formatting ----------------------------- */
 
 .swift-paragraph {

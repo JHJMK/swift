@@ -35,10 +35,12 @@ export interface LivePreviewOptions {
 
 export const reloadMermaid = StateEffect.define<null>();
 export const refreshPreview = StateEffect.define<null>();
+export const holdCodeFences = StateEffect.define<boolean>();
 
 interface PreviewValue {
   decorations: DecorationSet;
   atomic: DecorationSet;
+  held: boolean;
 }
 
 let viewRef: EditorView | null = null;
@@ -67,7 +69,11 @@ function isImageRef(ref: string): boolean {
 }
 
 /** build makes the decorations of a document in one pass. */
-function build(state: EditorState, options: LivePreviewOptions): PreviewValue {
+function build(
+  state: EditorState,
+  options: LivePreviewOptions,
+  held = false,
+): PreviewValue {
   const doc = state.doc;
   const lines: string[] = [];
   for (let i = 1; i <= doc.lines; i++) lines.push(doc.line(i).text);
@@ -440,7 +446,7 @@ function build(state: EditorState, options: LivePreviewOptions): PreviewValue {
         active.has(fence.closeLine) ||
         Array.from(active).some((a) => a >= fence.openLine && a <= (fence.closeLine === -1 ? lines.length : fence.closeLine));
       if (role === "open" || role === "close") {
-        if (!activeBlock) {
+        if (!activeBlock || held) {
           addLine(n, role === "open" ? "swift-fence-spacer swift-fence-top" : "swift-fence-spacer swift-fence-bottom");
           continue;
         }
@@ -598,7 +604,7 @@ function build(state: EditorState, options: LivePreviewOptions): PreviewValue {
 
   const decorations = Decoration.set(decos, true);
   const atomic = Decoration.set(atomicRanges, true);
-  return { decorations, atomic };
+  return { decorations, atomic, held };
 }
 
 /** livePreview is the Obsidian-style live preview of a Markdown document. */
@@ -608,12 +614,21 @@ export function livePreview(options: LivePreviewOptions): Extension {
       return build(state, options);
     },
     update(value, tr) {
+      let held = value.held;
+      let heldChanged = false;
+      for (const effect of tr.effects) {
+        if (effect.is(holdCodeFences)) {
+          held = effect.value;
+          heldChanged = true;
+        }
+      }
       if (
         tr.docChanged ||
         tr.selection ||
+        heldChanged ||
         tr.effects.some((effect) => effect.is(reloadMermaid) || effect.is(refreshPreview))
       ) {
-        return build(tr.state, options);
+        return build(tr.state, options, held);
       }
       return value;
     },
