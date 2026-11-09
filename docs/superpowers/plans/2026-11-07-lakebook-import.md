@@ -1,8 +1,8 @@
-# Yuque Lakebook Import Implementation Plan
+# Lakebook Import Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Import a Yuque Lakebook archive into a local 语燕 knowledge base, including document hierarchy, Markdown content, local images, and static board fallbacks.
+**Goal:** Import a Lakebook archive into a local 语燕 knowledge base, including document hierarchy, Markdown content, local images, and static board fallbacks.
 
 **Architecture:** Add a dependency-free `internal/lakebook` package for safe tar parsing, TOC reconstruction, and Lake HTML conversion. Add an app-level importer that writes the parsed tree through the existing Vault API and downloads images into `.assets`. Reuse one menu definition in the sidebar and workbench.
 
@@ -107,9 +107,9 @@ Parse `book.tocYml` with `yaml.v3`. Accept case-insensitive `META`, `TITLE`, `DO
 Map each TOC document via `doc_id`, falling back to the final segment of `url`, to the matching `meta.docs[].slug`. A `DOC` missing its document entry or JSON is fatal. A `BOARD` without document data still becomes a node with:
 
 ```markdown
-[在语雀中打开画板](原链接)
+[打开画板原链接](原链接)
 
-> 此内容来自语雀画板，暂不支持交互编辑。
+> 此内容来自 Lakebook 画板，暂不支持交互编辑。
 ```
 
 Use `doc.body`; when it is empty use `doc.body_draft`. Do not use `body_asl`.
@@ -119,7 +119,7 @@ Use `doc.body`; when it is empty use `doc.body_draft`. Do not use `body_asl`.
 ```bash
 go test ./internal/lakebook
 git add go.mod go.sum internal/lakebook
-git commit -m "feat: parse Yuque Lakebook archives"
+git commit -m "feat: parse Lakebook archives"
 ```
 
 Expected: PASS.
@@ -172,7 +172,7 @@ Parse with `golang.org/x/net/html`. Render supported blocks and inline nodes dir
 Only recognize a board when an element has `ne-board`/`lake-board` in `class`, or `data-card-type="board"`/`data-type="board"`. Extract title from `data-title`, `title`, or the first heading; extract visible text; extract preview from nested images or `preview`, `cover`, `thumbnail` attributes; extract the original link from `href` or `data-href`. Always add:
 
 ```text
-> 此内容来自语雀画板，暂不支持交互编辑。
+> 此内容来自 Lakebook 画板，暂不支持交互编辑。
 ```
 
 Increment the converter's board count once per recognized card.
@@ -266,7 +266,7 @@ Expected: PASS.
 
 - [ ] **Step 1: Write failing UI tests**
 
-Add `TestUnifiedImportMenus`. In the sidebar click `新建或导入知识库`, click `导入`, and assert exactly one each of `复制导入知识库`, `引用外部知识库`, and `导入语雀 Lakebook`. On the workbench click `导入知识库` and assert the same three choices. Assert the sidebar top-level no longer shows both copy and external beside `新建知识库`.
+Add `TestUnifiedImportMenus`. In the sidebar click `新建或导入知识库`, click `导入`, and assert exactly one each of `复制导入知识库`, `引用外部知识库`, and `导入 Lakebook`. On the workbench click `导入知识库` and assert the same three choices. Assert the sidebar top-level no longer shows both copy and external beside `新建知识库`.
 
 Run:
 
@@ -284,7 +284,7 @@ Add one helper:
 func importMenuItems(c *ui.Context, copyKB, externalKB, lakebook func()) {
 	menuItem(c, iconDownload, "复制导入知识库", copyKB)
 	menuItem(c, iconFolder, "引用外部知识库", externalKB)
-	menuItem(c, iconBook, "导入语雀 Lakebook", lakebook)
+	menuItem(c, iconBook, "导入 Lakebook", lakebook)
 }
 ```
 
@@ -301,10 +301,10 @@ Add `askImportLakebook` using:
 ```go
 mygo.Dialog.Open(mygo.OpenDialogOptions{
 	Parent:      a.win,
-	Title:       "导入语雀 Lakebook",
+	Title:       "导入 Lakebook",
 	ButtonLabel: "选择文件",
 	Filters: []mygo.FileFilter{{
-		Name:       "语雀 Lakebook",
+		Name:       "Lakebook",
 		Extensions: []string{"lakebook"},
 	}},
 })
