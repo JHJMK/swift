@@ -13,3 +13,4 @@ mygo_windows_*.syso
 AGENTS.md
 .gitlab-ci.yaml
 /deploy/
+/docs/superpowers
