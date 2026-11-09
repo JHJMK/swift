@@ -129,6 +129,34 @@ func (a *app) settingsModal(c *ui.Context) {
 
 					ui.Box(c).Height(1).Background(t.Border)
 
+					ui.Column(c).Gap(6).Children(func() {
+						ui.Text(c, "诊断日志").FontSize(13).Bold()
+						ui.Text(c, "日志只保存在这台电脑，用于排查应用和编辑器问题。").
+							FontSize(12).TextColor(t.TextMuted)
+						if a.diagnostics != nil {
+							ui.Text(c, a.diagnostics.Directory()).FontSize(12).TextColor(t.TextMuted).Selectable().SingleLine()
+						} else {
+							ui.Text(c, "日志目录不可用。").FontSize(12).TextColor(t.Danger)
+						}
+						ui.Text(c, "仅保留最近 3 天，供开发者排查问题。").FontSize(12).TextColor(t.TextMuted)
+						ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+							if ui.Button(c, "导出最近 3 天日志…").Clicked() {
+								a.logNote = ""
+								a.deferred = a.askExportDiagnosticLogs
+								a.update()
+							}
+							if a.logNote != "" {
+								color := t.TextMuted
+								if a.logNoteErr {
+									color = t.Danger
+								}
+								ui.Text(c, a.logNote).FontSize(12).TextColor(color)
+							}
+						})
+					})
+
+					ui.Box(c).Height(1).Background(t.Border)
+
 					kbs, docs := a.counts()
 					ui.Column(c).Gap(4).Children(func() {
 						ui.Text(c, "当前内容").FontSize(13).Bold()

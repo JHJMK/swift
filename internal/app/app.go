@@ -213,6 +213,10 @@ type app struct {
 
 	// kbWatch follows the open knowledge base's folder on disk.
 	kbWatch *kbWatch
+
+	diagnostics *diagnosticLogger
+	logNote     string
+	logNoteErr  bool
 }
 
 func newApp() *app {

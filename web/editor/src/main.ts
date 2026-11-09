@@ -37,6 +37,7 @@ import {
 import { tags as t } from "@lezer/highlight";
 import TurndownService from "turndown";
 import { cachedMermaidSvg, renderMermaidSvg } from "./mermaid";
+import { installDiagnostics } from "./diagnostics";
 
 import {
   countCharacters,
@@ -44,6 +45,7 @@ import {
   outlineHeadings,
   parseFences,
 } from "./markdown";
+import { assetUrl, clipboardFiles, isImageFile } from "./runtime";
 import {
   attachView,
   holdCodeFences,
@@ -130,6 +132,7 @@ const settings = {
 };
 
 const bridge: MyGoBridge = window.mygo ?? createMockBridge();
+installDiagnostics(bridge, SERVICE);
 
 const turndown = new TurndownService({
   headingStyle: "atx",
@@ -144,13 +147,6 @@ turndown.addRule("strikethrough", {
 });
 
 const saveCompartment = new Compartment();
-
-function assetUrl(ref: string): string {
-  const trimmed = ref.trim().replace(/^<|>$/g, "");
-  if (!trimmed) return "";
-  if (/^(https?:|data:|blob:|file:)/i.test(trimmed)) return trimmed;
-  return `swiftassets://localhost/asset?doc=${encodeURIComponent(docId)}&ref=${encodeURIComponent(trimmed)}`;
-}
 
 function copyText(text: string) {
   void (async () => {
@@ -240,7 +236,7 @@ function makeEditorState(doc: string): EditorState {
         get docId() {
           return docId;
         },
-        assetUrl,
+        assetUrl: (ref) => assetUrl(ref, docId, bridge.platform ?? "web"),
         copy: copyText,
         openLink,
         reveal: revealPosition,
@@ -975,7 +971,7 @@ function escapeEditor(): boolean {
 async function handlePaste(event: ClipboardEvent) {
   if (isReadOnly() || !event.clipboardData) return;
   const data = event.clipboardData;
-  const files = Array.from(data.files ?? []);
+  const files = clipboardFiles(data);
   if (files.length) {
     event.preventDefault();
     await insertFiles(files);
@@ -1006,7 +1002,7 @@ async function insertFiles(files: File[]) {
   for (const file of files) {
     try {
       const base64 = await readBase64(file);
-      if (file.type.startsWith("image/")) {
+      if (isImageFile(file)) {
         const result = await bridge.call<AttachmentResult>(
           `${SERVICE}.InsertImageData`,
           docId,

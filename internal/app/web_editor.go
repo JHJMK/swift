@@ -132,6 +132,11 @@ func (s *webEditorService) SetOutlineWidth(_ context.Context, width float32) err
 	return err
 }
 
+// ReportLog records a warning, error or unhandled exception from the page.
+func (s *webEditorService) ReportLog(_ context.Context, level, message, stack string) {
+	mygo.RunOnMain(func() { s.a.reportWebLog(level, message, stack) })
+}
+
 // InsertImageData writes an image pasted or dropped on the page.
 func (s *webEditorService) InsertImageData(_ context.Context, id, name, data string) (webEditorInsertResult, error) {
 	var result webEditorInsertResult

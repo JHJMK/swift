@@ -1,7 +1,9 @@
 package app
 
 import (
+	"io"
 	"log"
+	"os"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -9,10 +11,19 @@ import (
 
 // Run starts 语燕 and stays until it quits.
 func Run() {
+	diagnostics, err := openDiagnosticLogger()
+	if err != nil {
+		log.Printf("swift: diagnostic logs: %v", err)
+	} else {
+		log.SetOutput(io.MultiWriter(os.Stderr, diagnostics))
+		log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+		defer diagnostics.Close()
+	}
 	// 语燕 is light throughout: on a dark desktop its window chrome stays
 	// light too, as its pages are.
 	mygo.Theme.SetSource(mygo.ThemeLight)
 	a := newApp()
+	a.diagnostics = diagnostics
 	// The document page is an embedded web page; its scheme and methods
 	// must be in place before the window exists.
 	a.setupWebSupport()
