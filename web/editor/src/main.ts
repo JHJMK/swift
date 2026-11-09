@@ -1,6 +1,6 @@
 import "./obsidian.css";
 
-import { EditorState, Compartment } from "@codemirror/state";
+import { EditorState, Compartment, Prec } from "@codemirror/state";
 import {
   EditorView,
   drawSelection,
@@ -37,14 +37,23 @@ import {
 import { tags as t } from "@lezer/highlight";
 import TurndownService from "turndown";
 import { cachedMermaidSvg, renderMermaidSvg } from "./mermaid";
+import { installDiagnostics } from "./diagnostics";
 
 import {
   countCharacters,
   countWords,
+  fenceAt,
   outlineHeadings,
   parseFences,
 } from "./markdown";
-import { attachView, livePreview, refreshPreview, reloadMermaid } from "./live-preview";
+import { assetUrl, clipboardFiles, isImageFile } from "./runtime";
+import {
+  attachView,
+  holdCodeFences,
+  livePreview,
+  refreshPreview,
+  reloadMermaid,
+} from "./live-preview";
 import type {
   AttachmentResult,
   CommandPayload,
@@ -124,6 +133,7 @@ const settings = {
 };
 
 const bridge: MyGoBridge = window.mygo ?? createMockBridge();
+installDiagnostics(bridge, SERVICE);
 
 const turndown = new TurndownService({
   headingStyle: "atx",
@@ -138,13 +148,6 @@ turndown.addRule("strikethrough", {
 });
 
 const saveCompartment = new Compartment();
-
-function assetUrl(ref: string): string {
-  const trimmed = ref.trim().replace(/^<|>$/g, "");
-  if (!trimmed) return "";
-  if (/^(https?:|data:|blob:|file:)/i.test(trimmed)) return trimmed;
-  return `swiftassets://localhost/asset?doc=${encodeURIComponent(docId)}&ref=${encodeURIComponent(trimmed)}`;
-}
 
 function copyText(text: string) {
   void (async () => {
@@ -161,30 +164,178 @@ function copyText(text: string) {
   })();
 }
 
+/** imageAsPngBlob rasterizes a picture the page can load into PNG. */
+function imageAsPngBlob(src: string): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx2d = canvas.getContext("2d");
+        if (!ctx2d || !canvas.width || !canvas.height) {
+          reject(new Error("canvas unavailable"));
+          return;
+        }
+        ctx2d.drawImage(img, 0, 0);
+        canvas.toBlob(
+          (blob) => (blob ? resolve(blob) : reject(new Error("encode failed"))),
+          "image/png",
+        );
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    };
+    img.onerror = () => reject(new Error("image failed"));
+    img.src = src;
+  });
+}
+
+/** copyImage puts the picture itself on the clipboard, not its path. The
+ * page rasterizes the pictures it can load; the app reads the vault's
+ * own files and writes them as PNG. */
+function copyImage(src: string, ref: string) {
+  void (async () => {
+    try {
+      const blob = await imageAsPngBlob(src);
+      await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+      toast("已复制图片");
+      return;
+    } catch {
+      // The page could not copy it; let the app read the file.
+    }
+    try {
+      await bridge.call<void>(`${SERVICE}.CopyImage`, docId, ref || src);
+      toast("已复制图片");
+    } catch {
+      toast("复制图片失败");
+    }
+  })();
+}
+
+/** imageDataURL returns a loaded picture as a portable data URL. */
+function imageDataURL(img: HTMLImageElement): string | null {
+  const src = img.currentSrc || img.src;
+  if (!src) return null;
+  // These formats are portable in HTML as they are; SVG is rasterized
+  // below so apps that do not read SVG can still paste the picture.
+  if (/^data:image\/(png|jpe?g|gif|webp);/i.test(src)) return src;
+  if (!img.complete || !img.naturalWidth || !img.naturalHeight) return null;
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0);
+    return canvas.toDataURL("image/png");
+  } catch {
+    // A picture the page may not read across origins stays as it is.
+    return null;
+  }
+}
+
+/** copyMixedSelection puts text and pictures on the clipboard together.
+ * A browser copy of a page gives the receiving app the pictures' URLs,
+ * which point at the vault's private scheme and cannot be shown there.
+ * Replacing them with data URLs makes the pictures travel with the text. */
+function copyMixedSelection(event: ClipboardEvent) {
+  if (!event.clipboardData) return;
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
+  const range = selection.getRangeAt(0);
+  if (!view.contentDOM.contains(range.commonAncestorContainer)) return;
+  const fragment = range.cloneContents();
+  if (!fragment.querySelector("img.swift-image-el")) return;
+
+  const dataBySrc = new Map<string, string>();
+  for (const img of Array.from(view.contentDOM.querySelectorAll<HTMLImageElement>("img.swift-image-el"))) {
+    if (!range.intersectsNode(img)) continue;
+    const data = imageDataURL(img);
+    if (data) dataBySrc.set(img.src, data);
+  }
+  if (dataBySrc.size === 0) return;
+
+  const holder = document.createElement("div");
+  holder.appendChild(fragment);
+  holder.querySelectorAll("img.cm-widgetBuffer, .code-block-flair, .swift-embed-hint").forEach((el) => el.remove());
+  // The Markdown markers are visible while a line is edited; a copy
+  // should carry the rendered text, not "**" around bold words.
+  holder.querySelectorAll(".swift-formatting").forEach((el) => el.remove());
+
+  let converted = 0;
+  for (const img of Array.from(holder.querySelectorAll<HTMLImageElement>("img.swift-image-el"))) {
+    const data = dataBySrc.get(img.src);
+    if (data) {
+      img.src = data;
+      converted++;
+    }
+    img.removeAttribute("srcset");
+    img.removeAttribute("loading");
+    img.removeAttribute("title");
+    img.setAttribute("alt", img.alt || "图片");
+  }
+  if (converted === 0) return;
+
+  for (const el of Array.from(holder.querySelectorAll<HTMLElement>("*"))) {
+    const classes = el.classList;
+    if (classes.contains("swift-strong")) el.style.fontWeight = "700";
+    if (classes.contains("swift-em")) el.style.fontStyle = "italic";
+    if (classes.contains("swift-strike")) el.style.textDecoration = "line-through";
+    if (classes.contains("swift-inline-code")) {
+      el.style.fontFamily = "monospace";
+      el.style.background = "#fafafa";
+    }
+    el.removeAttribute("class");
+    el.removeAttribute("contenteditable");
+    el.removeAttribute("data-href");
+    el.removeAttribute("aria-hidden");
+  }
+
+  const pictures = Array.from(holder.querySelectorAll("img"))
+    .map((img) => img.getAttribute("alt") || "")
+    .filter(Boolean);
+  const selectedText = selection.toString();
+  const plain = selectedText.trim() ? selectedText : pictures.join("\n");
+  try {
+    event.clipboardData.setData("text/html", `<meta charset="utf-8">${holder.innerHTML}`);
+    event.clipboardData.setData("text/plain", plain);
+  } catch {
+    // Leave the copy to the browser if this web view refuses the data.
+    return;
+  }
+  event.preventDefault();
+}
+
 function openLink(url: string) {
   void bridge.call<void>(`${SERVICE}.OpenLink`, url).catch(() => undefined);
 }
 
-/** obsidianHighlightStyle maps syntax tokens to Obsidian's light palette. */
+/** obsidianHighlightStyle maps syntax tokens to Obsidian's light palette.
+ * The colors stay darker than Obsidian's faint tokens so code on the
+ * near-white block background keeps a comfortable contrast; Bash in
+ * particular shows many comments, strings and builtins at once. */
 const obsidianHighlightStyle = HighlightStyle.define([
-  { tag: t.comment, color: "#ababab" },
-  { tag: [t.keyword, t.modifier, t.operatorKeyword], color: "#d53984" },
-  { tag: [t.string, t.special(t.string), t.regexp], color: "#08b94e" },
-  { tag: [t.number, t.bool, t.null, t.atom], color: "#7852ee" },
-  { tag: [t.function(t.variableName), t.function(t.propertyName)], color: "#e0ac00" },
-  { tag: [t.typeName, t.className, t.namespace], color: "#00bfbc" },
-  { tag: [t.propertyName, t.attributeName], color: "#00bfbc" },
-  { tag: [t.operator, t.compareOperator, t.arithmeticOperator, t.logicOperator], color: "#e93147" },
-  { tag: [t.punctuation, t.separator, t.bracket], color: "#5c5c5c" },
-  { tag: [t.tagName, t.angleBracket], color: "#e93147" },
-  { tag: t.link, color: "#8a5cf6", textDecoration: "underline" },
-  { tag: t.url, color: "#8a5cf6" },
+  { tag: t.comment, color: "#6b6b6b" },
+  { tag: [t.keyword, t.modifier, t.operatorKeyword], color: "#b02060" },
+  { tag: [t.string, t.special(t.string), t.regexp], color: "#0b7a38" },
+  { tag: [t.number, t.bool, t.null, t.atom], color: "#5b3fc4" },
+  { tag: [t.function(t.variableName), t.function(t.propertyName)], color: "#8a5a00" },
+  { tag: [t.typeName, t.className, t.namespace], color: "#00706e" },
+  { tag: [t.propertyName, t.attributeName], color: "#00706e" },
+  { tag: [t.standard(t.variableName), t.definition(t.variableName)], color: "#1f5fbf" },
+  { tag: [t.operator, t.compareOperator, t.arithmeticOperator, t.logicOperator], color: "#c41f36" },
+  { tag: [t.punctuation, t.separator, t.bracket], color: "#4f4f4f" },
+  { tag: [t.tagName, t.angleBracket], color: "#c41f36" },
+  { tag: t.link, color: "#6d3fd4", textDecoration: "underline" },
+  { tag: t.url, color: "#6d3fd4" },
   { tag: t.emphasis, fontStyle: "italic" },
   { tag: t.strong, fontWeight: "700" },
   { tag: t.strikethrough, textDecoration: "line-through" },
   { tag: t.heading, color: "var(--text-normal)", fontWeight: "inherit" },
   { tag: t.monospace, color: "var(--text-normal)" },
-  { tag: t.invalid, color: "#e93147" },
+  { tag: t.invalid, color: "#c41f36" },
 ]);
 
 function makeEditorState(doc: string): EditorState {
@@ -230,12 +381,18 @@ function makeEditorState(doc: string): EditorState {
       }),
       syntaxHighlighting(obsidianHighlightStyle),
       saveCompartment.of(EditorView.editable.of(true)),
+      EditorView.inputHandler.of((view, from, to, text) => fenceInput(view, from, to, text)),
+      Prec.high(keymap.of([
+        { key: "Enter", run: fenceEnter },
+        { key: "Mod-a", run: selectCodeBlock },
+      ])),
       livePreview({
         get docId() {
           return docId;
         },
-        assetUrl,
+        assetUrl: (ref) => assetUrl(ref, docId, bridge.platform ?? "web"),
         copy: copyText,
+        copyImage,
         openLink,
         reveal: revealPosition,
         preview: () => previewMode,
@@ -263,6 +420,26 @@ function makeEditorState(doc: string): EditorState {
         }
         if (update.docChanged || update.selectionSet) {
           scheduleToolbarRefresh();
+        }
+        // The Edit > Select All menu uses the web view's own command,
+        // which bypasses the editor's keymap. When it jumps from a caret
+        // in a block of code straight to the whole document, keep the
+        // selection inside that block instead.
+        if (update.selectionSet && !update.docChanged && update.state.doc.length > 0) {
+          const next = update.state.selection.main;
+          if (next.from === 0 && next.to === update.state.doc.length) {
+            const previous = update.startState.selection.main;
+            const block = codeBlockSelection(update.startState, previous.head);
+            if (block && (block.from !== 0 || block.to !== update.state.doc.length)) {
+              const editor = update.view;
+              queueMicrotask(() => {
+                const now = editor.state.selection.main;
+                if (now.from === 0 && now.to === editor.state.doc.length) {
+                  editor.dispatch({ selection: { anchor: block.from, head: block.to }, scrollIntoView: true });
+                }
+              });
+            }
+          }
         }
         updateSlashMenu(update);
       }),
@@ -412,6 +589,40 @@ els.editor.addEventListener("click", (event) => {
 });
 
 els.editor.addEventListener("paste", handlePaste, true);
+document.addEventListener("copy", copyMixedSelection, true);
+
+// Keep collapsed fences from moving text under the pointer while selecting.
+// Plain clicks still expand a fence after mouseup.
+let holdingCodeFences = false;
+els.editor.addEventListener(
+  "mousedown",
+  (event) => {
+    if (event.button !== 0 || previewMode || readOnly) return;
+    const target = event.target as HTMLElement | null;
+    let codeLine = target?.closest<HTMLElement>(".swift-codeblock-line") ?? null;
+    while (codeLine && !codeLine.classList.contains("swift-codeblock-first")) {
+      const previous = codeLine.previousElementSibling;
+      codeLine = previous instanceof HTMLElement ? previous.closest(".swift-codeblock-line") : null;
+    }
+    if (!codeLine?.previousElementSibling?.classList.contains("swift-fence-spacer")) return;
+    holdingCodeFences = true;
+    view.dispatch({ effects: holdCodeFences.of(true) });
+  },
+  true,
+);
+
+window.addEventListener(
+  "mouseup",
+  () => {
+    if (!holdingCodeFences) return;
+    window.setTimeout(() => {
+      if (!view.state.selection.main.empty) return;
+      holdingCodeFences = false;
+      view.dispatch({ effects: holdCodeFences.of(false) });
+    }, 0);
+  },
+  true,
+);
 
 // The collapsed ``` lines are part of the code block's padding. A click
 // there enters the code block instead of putting the caret in the fence.
@@ -571,6 +782,9 @@ function applySettings(settingsValue: SettingsPayload) {
   document.documentElement.style.setProperty("--font-text-size", `${settings.fontSize}px`);
   document.documentElement.style.setProperty("--line-height-normal", String(settings.lineHeight));
   els.page.classList.toggle("is-readable-line-width", settings.readableLineWidth);
+  // A new font size or line height moves every line; measure again so the
+  // caret and clicks stay on the text.
+  if (typeof view !== "undefined") view.requestMeasure();
 }
 
 function clampOutlineWidth(width: number): number {
@@ -783,6 +997,84 @@ function hasNode(pos: number, names: string[]): boolean {
   return false;
 }
 
+/** codeBlockSelection returns the text inside the fenced block holding
+ * pos, without its opening and closing fences. It returns null outside a
+ * block and for an empty block, where there is no inner text to select. */
+function codeBlockSelection(state: EditorState, pos: number): { from: number; to: number } | null {
+  const doc = state.doc;
+  if (doc.length === 0) return null;
+  const line = doc.lineAt(Math.max(0, Math.min(pos, doc.length)));
+  const lines: string[] = [];
+  for (let i = 1; i <= doc.lines; i++) lines.push(doc.line(i).text);
+  const fence = fenceAt(parseFences(lines), line.number - 1);
+  if (!fence) return null;
+  // An empty block has its closing fence on the line after the opening
+  // one; selecting no text would make Select All appear broken.
+  if (fence.closeLine !== -1 && fence.closeLine === fence.openLine + 1) return null;
+  const firstBodyLine = fence.openLine + 2;
+  if (firstBodyLine > doc.lines) return null;
+  const from = doc.line(firstBodyLine).from;
+  const to = fence.closeLine === -1
+    ? doc.length
+    : Math.max(from, doc.line(fence.closeLine + 1).from - 1);
+  return to > from ? { from, to } : null;
+}
+
+/** selectCodeBlock handles Mod-a inside a fenced code block: it selects
+ * the block's inner text. Outside one the default Select All runs. */
+function selectCodeBlock(view: EditorView): boolean {
+  const block = codeBlockSelection(view.state, view.state.selection.main.head);
+  if (!block) return false;
+  view.dispatch({ selection: { anchor: block.from, head: block.to }, scrollIntoView: true });
+  return true;
+}
+
+/** fenceInput closes the code fence when a third backtick begins one.
+ * The closing fence goes two lines below, so the language can still be
+ * typed after the opening fence before the caret enters the body. */
+function fenceInput(view: EditorView, from: number, to: number, text: string): boolean {
+  if (text !== "`" || from !== to) return false;
+  const line = view.state.doc.lineAt(from);
+  if (from !== line.to) return false;
+  const before = view.state.doc.sliceString(line.from, from);
+  const match = /^(\s{0,3})``$/.exec(before);
+  if (!match) return false;
+  let node: any = syntaxTree(view.state).resolveInner(from, -1);
+  while (node) {
+    if (node.name === "FencedCode" || node.name === "CodeBlock") return false;
+    node = node.parent;
+  }
+  const indent = match[1];
+  view.dispatch({
+    changes: { from, to, insert: "`\n\n" + indent + "```" },
+    // Keep the caret after the opening fence, where a language goes.
+    selection: { anchor: from + 1 },
+    scrollIntoView: true,
+  });
+  return true;
+}
+
+/** fenceEnter enters an empty auto-closed code block instead of adding
+ * another blank line between its fences. */
+function fenceEnter(view: EditorView): boolean {
+  if (isReadOnly()) return false;
+  const { from, to } = view.state.selection.main;
+  if (from !== to) return false;
+  const doc = view.state.doc;
+  const line = doc.lineAt(from);
+  if (from !== line.to) return false;
+  const open = /^(\s{0,3})(`{3,}|~{3,})(.*)$/.exec(line.text);
+  if (!open) return false;
+  if (line.number + 2 > doc.lines) return false;
+  const body = doc.line(line.number + 1);
+  if (body.text.trim() !== "") return false;
+  const close = doc.line(line.number + 2);
+  const closing = /^(\s{0,3})(`{3,}|~{3,})\s*$/.exec(close.text);
+  if (!closing || closing[2][0] !== open[2][0] || closing[2].length < open[2].length) return false;
+  view.dispatch({ selection: { anchor: body.from }, scrollIntoView: true });
+  return true;
+}
+
 function blockPrefix(kind: BlockKind, level: number): string {
   switch (kind) {
     case "heading":
@@ -936,7 +1228,7 @@ function escapeEditor(): boolean {
 async function handlePaste(event: ClipboardEvent) {
   if (isReadOnly() || !event.clipboardData) return;
   const data = event.clipboardData;
-  const files = Array.from(data.files ?? []);
+  const files = clipboardFiles(data);
   if (files.length) {
     event.preventDefault();
     await insertFiles(files);
@@ -967,7 +1259,7 @@ async function insertFiles(files: File[]) {
   for (const file of files) {
     try {
       const base64 = await readBase64(file);
-      if (file.type.startsWith("image/")) {
+      if (isImageFile(file)) {
         const result = await bridge.call<AttachmentResult>(
           `${SERVICE}.InsertImageData`,
           docId,

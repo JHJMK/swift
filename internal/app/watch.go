@@ -435,6 +435,18 @@ func (a *app) reloadIfChanged(doc *docState, md string, mtime time.Time) {
 	if a.doc != doc || doc.Markdown == md {
 		return
 	}
+	// The file holds exactly what this app last wrote: the echo of its own
+	// save, reported by the watch while the author kept typing. Only text
+	// from another program counts as a change.
+	if md == doc.Saved {
+		return
+	}
+	// A watch may also report an older save after a newer one. It carries
+	// an older modification time and is one of the texts written here, so
+	// it is not another program's edit either.
+	if !mtime.After(doc.MTime) && doc.wrote(md) {
+		return
+	}
 	if doc.Dirty {
 		if !doc.externalConflict {
 			doc.externalConflict = true

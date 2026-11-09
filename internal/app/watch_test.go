@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo"
 )
@@ -272,5 +273,56 @@ func TestExternalFolderRenameKeepsSelection(t *testing.T) {
 	}
 	if a.findNode(a.selected) == nil {
 		t.Fatal("renamed folder missing from tree")
+	}
+}
+
+// The watch reports the app's own autosave while the author keeps typing:
+// the file holds exactly what the app last wrote, so the notice about a
+// changed disk file stays away.
+func TestAutosaveEchoStaysQuiet(t *testing.T) {
+	a, root, rel := newTestApp(t)
+	a.openDoc(rel)
+	saved := "# 标题\n\n正文内容\n"
+	a.doc.Saved = saved
+	a.doc.Markdown = "保存之后又输入的内容"
+	a.doc.Dirty = true
+	writeExternal(t, root, rel, saved)
+	a.applyKBEvents(&kbWatch{rel: "我的知识库"}, []mygo.FileEvent{{
+		Op: mygo.FileWrite, Path: "开始.md",
+	}})
+	if a.toast != "" {
+		t.Fatalf("autosave echo showed a notice: %q", a.toast)
+	}
+	if a.doc.externalConflict {
+		t.Fatal("autosave echo noted as an external conflict")
+	}
+	if a.doc.Markdown != "保存之后又输入的内容" || !a.doc.Dirty {
+		t.Fatalf("local edits replaced: %+v", a.doc)
+	}
+}
+
+// A watch can report an older autosave after a newer one. That echo is
+// still this app's own write, not an external edit, so it stays quiet.
+func TestStaleAutosaveEchoStaysQuiet(t *testing.T) {
+	a, root, rel := newTestApp(t)
+	a.openDoc(rel)
+	older := "# 旧的保存\n"
+	a.doc.rememberWrite(older)
+	a.doc.Saved = "# 新的保存\n"
+	a.doc.Markdown = "保存之后又输入的内容"
+	a.doc.Dirty = true
+	a.doc.MTime = time.Now().Add(time.Hour)
+	writeExternal(t, root, rel, older)
+	a.applyKBEvents(&kbWatch{rel: "我的知识库"}, []mygo.FileEvent{{
+		Op: mygo.FileWrite, Path: "开始.md",
+	}})
+	if a.toast != "" {
+		t.Fatalf("stale autosave echo showed a notice: %q", a.toast)
+	}
+	if a.doc.externalConflict {
+		t.Fatal("stale autosave echo noted as an external conflict")
+	}
+	if a.doc.Markdown != "保存之后又输入的内容" || !a.doc.Dirty {
+		t.Fatalf("local edits replaced: %+v", a.doc)
 	}
 }

@@ -28,6 +28,7 @@ export interface LivePreviewOptions {
   docId: string;
   assetUrl(ref: string): string;
   copy(text: string): void;
+  copyImage(src: string, ref: string): void;
   openLink(url: string): void;
   reveal(pos: number): void;
   preview(): boolean;
@@ -35,10 +36,12 @@ export interface LivePreviewOptions {
 
 export const reloadMermaid = StateEffect.define<null>();
 export const refreshPreview = StateEffect.define<null>();
+export const holdCodeFences = StateEffect.define<boolean>();
 
 interface PreviewValue {
   decorations: DecorationSet;
   atomic: DecorationSet;
+  held: boolean;
 }
 
 let viewRef: EditorView | null = null;
@@ -67,7 +70,11 @@ function isImageRef(ref: string): boolean {
 }
 
 /** build makes the decorations of a document in one pass. */
-function build(state: EditorState, options: LivePreviewOptions): PreviewValue {
+function build(
+  state: EditorState,
+  options: LivePreviewOptions,
+  held = false,
+): PreviewValue {
   const doc = state.doc;
   const lines: string[] = [];
   for (let i = 1; i <= doc.lines; i++) lines.push(doc.line(i).text);
@@ -89,6 +96,10 @@ function build(state: EditorState, options: LivePreviewOptions): PreviewValue {
     docId: options.docId,
     assetUrl: options.assetUrl,
     copy: options.copy,
+    copyImage: options.copyImage,
+    remeasure() {
+      viewRef?.requestMeasure();
+    },
     toggleTask(pos) {
       if (options.preview()) return;
       const view = viewRef;
@@ -153,7 +164,7 @@ function build(state: EditorState, options: LivePreviewOptions): PreviewValue {
             const resolved = inlineAssetUrl(target) || options.assetUrl(target);
             decos.push(
               Decoration.replace({
-                widget: new ImageWidget(resolved, alias || target, base + i, false, ctx),
+                widget: new ImageWidget(resolved, alias || target, base + i, false, target, ctx),
               }).range(base + i, base + end + 2),
             );
             atomicRanges.push(Decoration.mark({}).range(base + i, base + end + 2));
@@ -188,7 +199,7 @@ function build(state: EditorState, options: LivePreviewOptions): PreviewValue {
             if (resolved) {
               decos.push(
                 Decoration.replace({
-                  widget: new ImageWidget(resolved, alt, base + i, false, ctx),
+                  widget: new ImageWidget(resolved, alt, base + i, false, url.trim().replace(/^<|>$/g, ""), ctx),
                 }).range(base + i, base + end + 1),
               );
               if (end + 1 > i) {
@@ -440,7 +451,7 @@ function build(state: EditorState, options: LivePreviewOptions): PreviewValue {
         active.has(fence.closeLine) ||
         Array.from(active).some((a) => a >= fence.openLine && a <= (fence.closeLine === -1 ? lines.length : fence.closeLine));
       if (role === "open" || role === "close") {
-        if (!activeBlock) {
+        if (!activeBlock || held) {
           addLine(n, role === "open" ? "swift-fence-spacer swift-fence-top" : "swift-fence-spacer swift-fence-bottom");
           continue;
         }
@@ -461,7 +472,11 @@ function build(state: EditorState, options: LivePreviewOptions): PreviewValue {
       if (n === last) cls.push("swift-codeblock-last");
       addLine(n, cls.join(" "));
       style(line.from, line.to, "swift-code-text");
-      if (n === first) {
+      // The flair is positioned at the end of the first code line. On an
+      // empty line being edited, that is also the caret's anchor, and the
+      // absolutely positioned flair drags the caret to the far right.
+      // Show it once the line has text, or while the caret is elsewhere.
+      if (n === first && (line.length > 0 || !isActive)) {
         decos.push(
           Decoration.widget({
             widget: new CodeFlairWidget(displayLang(fence.lang) || fence.lang, fence.title, fence.code, ctx),
@@ -491,7 +506,7 @@ function build(state: EditorState, options: LivePreviewOptions): PreviewValue {
       if (resolved) {
         decos.push(
           Decoration.replace({
-            widget: new ImageWidget(resolved, imageOnly[1], line.from, true, ctx),
+            widget: new ImageWidget(resolved, imageOnly[1], line.from, true, url, ctx),
             block: true,
           }).range(line.from, line.to),
         );
@@ -507,7 +522,7 @@ function build(state: EditorState, options: LivePreviewOptions): PreviewValue {
         const resolved = inlineAssetUrl(target) || options.assetUrl(target);
         decos.push(
           Decoration.replace({
-            widget: new ImageWidget(resolved, alias || target, line.from, true, ctx),
+            widget: new ImageWidget(resolved, alias || target, line.from, true, target, ctx),
             block: true,
           }).range(line.from, line.to),
         );
@@ -598,7 +613,7 @@ function build(state: EditorState, options: LivePreviewOptions): PreviewValue {
 
   const decorations = Decoration.set(decos, true);
   const atomic = Decoration.set(atomicRanges, true);
-  return { decorations, atomic };
+  return { decorations, atomic, held };
 }
 
 /** livePreview is the Obsidian-style live preview of a Markdown document. */
@@ -608,12 +623,21 @@ export function livePreview(options: LivePreviewOptions): Extension {
       return build(state, options);
     },
     update(value, tr) {
+      let held = value.held;
+      let heldChanged = false;
+      for (const effect of tr.effects) {
+        if (effect.is(holdCodeFences)) {
+          held = effect.value;
+          heldChanged = true;
+        }
+      }
       if (
         tr.docChanged ||
         tr.selection ||
+        heldChanged ||
         tr.effects.some((effect) => effect.is(reloadMermaid) || effect.is(refreshPreview))
       ) {
-        return build(tr.state, options);
+        return build(tr.state, options, held);
       }
       return value;
     },

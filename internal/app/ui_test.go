@@ -68,15 +68,29 @@ func TestUIViewOpensDocument(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if !a.previewMode || !tt.HasText("编辑") || tt.HasText("加粗（⌘B）") {
-		t.Fatalf("preview mode not shown: preview=%v texts=%q", a.previewMode, tt.Texts())
+	texts := tt.Texts()
+	previewLabels := 0
+	for _, text := range texts {
+		if text == "预览" {
+			previewLabels++
+		}
+	}
+	if !a.previewMode || !tt.HasText("编辑") || tt.HasText("加粗（⌘B）") || previewLabels != 0 {
+		t.Fatalf("preview mode not shown: preview=%v previewLabels=%d texts=%q", a.previewMode, previewLabels, texts)
 	}
 	if err := tt.Click("编辑"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if a.previewMode || !tt.HasText("加粗（⌘B）") {
-		t.Fatalf("edit mode not restored: preview=%v texts=%q", a.previewMode, tt.Texts())
+	texts = tt.Texts()
+	editLabels := 0
+	for _, text := range texts {
+		if text == "编辑" {
+			editLabels++
+		}
+	}
+	if a.previewMode || !tt.HasText("加粗（⌘B）") || editLabels != 0 {
+		t.Fatalf("edit mode not restored: preview=%v editLabels=%d texts=%q", a.previewMode, editLabels, texts)
 	}
 
 	if err := tt.Click("工作台"); err != nil {

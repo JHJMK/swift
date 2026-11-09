@@ -1,6 +1,7 @@
 package app
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -35,6 +36,11 @@ type docState struct {
 	Markdown string
 	// Web tells that the document is shown in the page's web editor.
 	Web bool
+
+	// ownWrites remembers the last texts this app wrote, so the watch's
+	// echo of an earlier save is not mistaken for another program's
+	// change while the author keeps typing.
+	ownWrites [][sha256.Size]byte
 
 	// TitleDraft is the title as typed on the page, and ShowTitle tells
 	// that the page shows the large title field above the text. Every
@@ -74,6 +80,14 @@ type promptState struct {
 	OKLabel string
 	OnOK    func(string) error
 	Err     string
+}
+
+// firstDocState names the first knowledge base and its first document, in
+// a vault that has no knowledge base yet.
+type firstDocState struct {
+	KB    string
+	Title string
+	Err   string
 }
 
 // confirmState asks whether to do something.
@@ -122,6 +136,9 @@ type app struct {
 
 	prompt  *promptState
 	confirm *confirmState
+
+	// firstDoc asks for the names of a first knowledge base and document.
+	firstDoc *firstDocState
 
 	settingsOpen     bool
 	pageSettingsOpen bool
@@ -213,6 +230,10 @@ type app struct {
 
 	// kbWatch follows the open knowledge base's folder on disk.
 	kbWatch *kbWatch
+
+	diagnostics *diagnosticLogger
+	logNote     string
+	logNoteErr  bool
 }
 
 func newApp() *app {
@@ -365,6 +386,27 @@ func (a *app) openDoc(rel string) {
 	}
 }
 
+// rememberWrite records a text this app wrote, keeping only the recent
+// ones: a watch may report an older save after a newer one.
+func (d *docState) rememberWrite(md string) {
+	const keep = 8
+	d.ownWrites = append(d.ownWrites, sha256.Sum256([]byte(md)))
+	if len(d.ownWrites) > keep {
+		d.ownWrites = d.ownWrites[len(d.ownWrites)-keep:]
+	}
+}
+
+// wrote reports whether md is one of the texts this app wrote.
+func (d *docState) wrote(md string) bool {
+	sum := sha256.Sum256([]byte(md))
+	for _, own := range d.ownWrites {
+		if own == sum {
+			return true
+		}
+	}
+	return false
+}
+
 func titleOf(rel string) string {
 	base := path.Base(rel)
 	return strings.TrimSuffix(base, filepath.Ext(base))
@@ -422,6 +464,7 @@ func (a *app) flushDoc() {
 			a.setError(err)
 			return
 		}
+		doc.rememberWrite(md)
 		doc.Saved = md
 		doc.MTime = time.Now()
 		doc.Dirty = false
@@ -443,6 +486,7 @@ func (a *app) flushDoc() {
 		}
 		return
 	}
+	doc.rememberWrite(md)
 	doc.Saved = md
 	doc.MTime = mtime
 	doc.Dirty = false
@@ -672,6 +716,10 @@ func (a *app) askNewFolderTitled(parent, title, value string) {
 }
 
 func (a *app) askNewDoc() {
+	if len(a.tree) == 0 {
+		a.askFirstDoc()
+		return
+	}
 	parent, ok := a.newParent()
 	if !ok {
 		return
@@ -690,6 +738,39 @@ func (a *app) askNewDocIn(parent string) {
 	*a.openState(parent) = true
 	a.refreshTree()
 	a.openDoc(rel)
+}
+
+// askFirstDoc asks for the names of a first knowledge base and its first
+// document, in a vault that has no knowledge base yet.
+func (a *app) askFirstDoc() {
+	a.firstDoc = &firstDocState{KB: "我的知识库", Title: "第一篇文档"}
+	a.update()
+}
+
+// createFirstDoc makes the knowledge base and the document the first-doc
+// dialog named, and opens the document.
+func (a *app) createFirstDoc() error {
+	kbName := strings.TrimSpace(a.firstDoc.KB)
+	title := strings.TrimSpace(a.firstDoc.Title)
+	if kbName == "" {
+		return errors.New("知识库名称不能为空")
+	}
+	if title == "" {
+		title = titleUntitled
+	}
+	kb, err := a.vault.CreateKnowledgeBase(kbName)
+	if err != nil {
+		return err
+	}
+	rel, err := a.vault.CreateDoc(kb, title)
+	if err != nil {
+		return err
+	}
+	a.firstDoc = nil
+	*a.openState(kb) = true
+	a.refreshTree()
+	a.openDoc(rel)
+	return nil
 }
 
 // pickerDir turns a picker's choice into the folder a document goes in: a
@@ -714,7 +795,8 @@ func (a *app) defaultPickerDir() string {
 }
 
 // askNewDocAt asks where a new document goes before creating it, and
-// makes a knowledge base first when there is none.
+// asks for the names of a first knowledge base and document when there
+// is no knowledge base yet.
 func (a *app) askNewDocAt() {
 	if a.vault == nil {
 		return
@@ -722,13 +804,7 @@ func (a *app) askNewDocAt() {
 	a.flushTitle()
 	a.flushDoc()
 	if len(a.tree) == 0 {
-		kb, err := a.vault.CreateKnowledgeBase("我的知识库")
-		if err != nil {
-			a.setError(err)
-			return
-		}
-		a.refreshTree()
-		a.askNewDocIn(kb)
+		a.askFirstDoc()
 		return
 	}
 	a.picker = &pickerState{
@@ -854,6 +930,7 @@ func (a *app) saveNoteTo(rel string) error {
 		return err
 	}
 	a.doc.Dirty = false
+	a.doc.rememberWrite(md)
 	a.doc.Saved = md
 	if err := a.vault.ClearNote(); err != nil {
 		return err
@@ -1101,6 +1178,81 @@ func (a *app) dropNode(dragged, target *Node) {
 		return
 	}
 	a.moveNode(dragged.Rel, newParent, before)
+}
+
+// dropTreeItem drops a dragged node on a tree row: the row's top or bottom
+// strip inserts it between the rows, the middle nests it into the row's
+// node.
+func (a *app) dropTreeItem(rel string, target *Node, edge string) {
+	// Knowledge bases reorder in the sidebar's own list, not in the tree.
+	if !strings.Contains(rel, "/") {
+		return
+	}
+	from := a.findNode(rel)
+	if from == nil || from.Rel == target.Rel || relWithin(target.Rel, from.Rel) {
+		return
+	}
+	if edge != "top" && edge != "bottom" {
+		a.dropNode(from, target)
+		a.update()
+		return
+	}
+	parent := parentRel(target.Rel)
+	if parent == "" {
+		return
+	}
+	before := target.Name
+	if edge == "bottom" {
+		before = a.nextSiblingName(parent, target.Name)
+	}
+	if treeLevel(parent)+a.subtreeDepth(from) > maxTreeLevel {
+		a.setError(fmt.Errorf("目录最多支持 %d 个层级", maxTreeLevel))
+		return
+	}
+	a.moveNode(from.Rel, parent, before)
+	a.update()
+}
+
+// nextSiblingName returns the entry shown after name in parent's children,
+// or "" when name is the last one.
+func (a *app) nextSiblingName(parent, name string) string {
+	n := a.findNode(parent)
+	if n == nil {
+		return ""
+	}
+	for i, child := range n.Children {
+		if child.Name == name && i+1 < len(n.Children) {
+			return n.Children[i+1].Name
+		}
+	}
+	return ""
+}
+
+// dropKB reorders a knowledge base dropped on another one in the sidebar,
+// above it on the row's top half and below it on its bottom half.
+func (a *app) dropKB(rel string, target *Node, edge string) {
+	if strings.Contains(rel, "/") || rel == target.Rel {
+		return
+	}
+	if a.findNode(rel) == nil {
+		return
+	}
+	before := target.Name
+	if edge == "bottom" {
+		before = a.nextKBName(target.Name)
+	}
+	a.moveNode(rel, "", before)
+	a.update()
+}
+
+// nextKBName returns the knowledge base shown after name, or "" at the end.
+func (a *app) nextKBName(name string) string {
+	for i, n := range a.tree {
+		if n.Name == name && i+1 < len(a.tree) {
+			return a.tree[i+1].Name
+		}
+	}
+	return ""
 }
 
 // maxTreeLevel is how many levels the knowledge base's tree shows, below
