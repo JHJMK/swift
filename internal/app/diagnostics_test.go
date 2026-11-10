@@ -223,6 +223,9 @@ func TestSettingsShowsDiagnosticLogs(t *testing.T) {
 	if err := tt.Click("设置"); err != nil {
 		t.Fatal(err)
 	}
+	if err := tt.Click("诊断日志"); err != nil {
+		t.Fatal(err)
+	}
 	tt.Frame()
 	for _, want := range []string{"诊断日志", "仅保留最近 3 天", "导出最近 3 天日志…"} {
 		if !tt.HasText(want) {

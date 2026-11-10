@@ -138,12 +138,29 @@ func Run() {
 			Content:         ui.View(a.view),
 		})
 		a.setupEditorWebView()
-		a.win.OnClose(func(*mygo.CloseEvent) {
-			a.quitting = true
-			a.stopKBWatch()
-			a.flushTitle()
-			a.flushDoc()
-			a.flushSync()
+		a.setupTray()
+		mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) {
+			a.prepareQuit()
+		})
+		mygo.App.OnActivate(func(hasVisibleWindows bool) {
+			if !hasVisibleWindows {
+				a.showFromBackground()
+			}
+		})
+		a.win.OnLeaveFullScreen(func() {
+			a.leaveFullScreenForHide()
+		})
+		a.win.OnClose(func(e *mygo.CloseEvent) {
+			if a.quitting {
+				return
+			}
+			if a.tray == nil {
+				// Without a tray there would be no way back to the window.
+				a.prepareQuit()
+				return
+			}
+			e.PreventDefault()
+			a.hideToBackground()
 		})
 		// Start after the window exists: the mirror's status repaints it.
 		a.startSync()

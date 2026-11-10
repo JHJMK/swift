@@ -70,6 +70,7 @@ func TestGlobalPageSettingsAndDocumentOverride(t *testing.T) {
 func TestPageSettingsUI(t *testing.T) {
 	a, _, rel := newTestApp(t)
 	a.settingsOpen = true
+	a.settingsSection = settingsDisplay
 	tt := ui.NewTester(a.view, 1180, 900)
 	tt.Frame()
 	if !tt.HasText("文档显示") || !tt.HasText("新文档默认使用这里的行距和字号；单独设置过的文档会覆盖全局默认。") {

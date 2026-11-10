@@ -145,6 +145,7 @@ type app struct {
 	firstDoc *firstDocState
 
 	settingsOpen     bool
+	settingsSection  string
 	pageSettingsOpen bool
 	trashOpen        bool
 	trash            []TrashEntry
@@ -198,6 +199,7 @@ type app struct {
 	// focusBody puts the caret at the start of the text after a title is
 	// entered.
 	focusBody   bool
+	saveWake    *time.Timer
 	toast       string
 	toastUntil  time.Time
 	lakebookJob *lakebookImportJob
@@ -210,17 +212,20 @@ type app struct {
 
 	// syncJob mirrors the vault to the remote while it runs, and
 	// syncNote is the message the sync settings show.
-	syncJob            *syncJob
-	syncNote           syncNote
-	syncResult         *syncResultState
-	showSyncSecret     bool
-	sidebarCollapsed   bool
-	treeCollapsed      bool
-	kbRailOpen         bool
-	syncRetryPending   bool
-	syncRestartPending bool
-	refocusEditor      bool
-	quitting           bool
+	syncJob             *syncJob
+	syncNote            syncNote
+	syncResult          *syncResultState
+	showSyncSecret      bool
+	sidebarCollapsed    bool
+	treeCollapsed       bool
+	kbRailOpen          bool
+	syncRetryPending    bool
+	syncRestartPending  bool
+	hideAfterFullScreen bool
+	refocusEditor       bool
+	quitting            bool
+
+	tray *mygo.Tray
 
 	// The Obsidian-style document page is a web view.
 	webView   *mygo.WebView
@@ -341,20 +346,18 @@ func (a *app) openDoc(rel string) {
 		return
 	}
 	web := a.editorWeb && a.webView != nil
-	text := richtext.ParseMarkdown(md)
-	if strings.TrimSpace(md) == "" {
-		text = richtext.NewText("")
-	}
 	saved := md
 	var fences map[string]codeFenceInfo
 	var document *richtext.Document
 	if !web {
+		text := richtext.ParseMarkdown(md)
+		if strings.TrimSpace(md) == "" {
+			text = richtext.NewText("")
+		}
 		text = a.loadImages(text, rel)
 		text, fences = a.annotateCodeFences(text, md)
 		document = a.newNativeDocument(text)
 		saved = nativeMarkdown(document.Text(), fences)
-	} else {
-		document = richtext.NewDocument(text)
 	}
 	a.doc = &docState{
 		Rel:        rel,
@@ -504,11 +507,19 @@ func (a *app) markDocDirty() {
 	}
 	a.doc.Dirty = true
 	a.saveAt = time.Now().Add(600 * time.Millisecond)
-	win := a.win
-	if win != nil {
-		time.AfterFunc(650*time.Millisecond, func() {
+	if a.win == nil {
+		return
+	}
+	// One timer redraws the page after the typing stops. Scheduling a
+	// timer for every keystroke used to wake the main thread repeatedly
+	// for a save that waits for the same quiet spell.
+	if a.saveWake == nil {
+		win := a.win
+		a.saveWake = time.AfterFunc(650*time.Millisecond, func() {
 			win.Update(func() {})
 		})
+	} else {
+		a.saveWake.Reset(650 * time.Millisecond)
 	}
 }
 
@@ -597,7 +608,7 @@ func (a *app) insertImage() {
 }
 
 func (a *app) wordCount() int {
-	if a.doc == nil {
+	if a.doc == nil || a.doc.Doc == nil {
 		return 0
 	}
 	return countWords(a.doc.Doc.Text().PlainText())
@@ -843,16 +854,14 @@ func (a *app) openNote() {
 		title = "小记"
 	}
 	web := a.editorWeb && a.webView != nil
-	text := richtext.ParseMarkdown(body)
-	if strings.TrimSpace(body) == "" {
-		text = richtext.NewText("")
-	}
 	var fences map[string]codeFenceInfo
 	var document *richtext.Document
 	saved := body
-	if web {
-		document = richtext.NewDocument(text)
-	} else {
+	if !web {
+		text := richtext.ParseMarkdown(body)
+		if strings.TrimSpace(body) == "" {
+			text = richtext.NewText("")
+		}
 		text = a.loadImages(text, "")
 		text, fences = a.annotateCodeFences(text, body)
 		document = a.newNativeDocument(text)

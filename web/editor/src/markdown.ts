@@ -120,7 +120,14 @@ export interface TableBlock {
   rows: string[][];
 }
 
-const TABLE_DELIM = /^\s*\|?\s*:?-{1,}\s*(?::?\s*\|?\s*:?-{1,}\s*)*\|?\s*:?\s*$/;
+/** isTableDelim reports a table's delimiter row without a regex that
+ * backtracks over every pipe in a long row. */
+function isTableDelim(line: string): boolean {
+  const text = line.trim();
+  if (!text.includes("|") || !text.includes("-") || !/^[\s|:-]+$/.test(text)) return false;
+  const cells = splitRow(text);
+  return cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell));
+}
 
 function splitRow(line: string): string[] {
   let text = line.trim();
@@ -161,7 +168,7 @@ export function parseTables(lines: string[], fences: Fence[]): TableBlock[] {
   }
   for (let i = 0; i + 1 < lines.length; i++) {
     if (inFence.has(i) || inFence.has(i + 1)) continue;
-    if (!/\|/.test(lines[i]) || !TABLE_DELIM.test(lines[i + 1])) continue;
+    if (!/\|/.test(lines[i]) || !isTableDelim(lines[i + 1])) continue;
     const header = splitRow(lines[i]);
     const delims = splitRow(lines[i + 1]);
     if (header.length < 1 || delims.length !== header.length) continue;
@@ -184,6 +191,18 @@ export function parseTables(lines: string[], fences: Fence[]): TableBlock[] {
     i = j - 1;
   }
   return out;
+}
+
+/** tableOnly returns the table when a document holds nothing else, so
+ * its page can open with the caret after it and the table rendered. */
+export function tableOnly(lines: string[], fences: Fence[]): TableBlock | null {
+  const tables = parseTables(lines, fences);
+  if (tables.length !== 1) return null;
+  const first = lines.findIndex((line) => line.trim() !== "");
+  let last = lines.length - 1;
+  while (last >= 0 && lines[last].trim() === "") last--;
+  if (first < 0 || last < 0) return null;
+  return tables[0].fromLine === first && tables[0].toLine === last ? tables[0] : null;
 }
 
 /** outlineHeadings lists ATX headings outside code blocks. */

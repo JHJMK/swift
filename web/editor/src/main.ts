@@ -45,6 +45,7 @@ import {
   fenceAt,
   outlineHeadings,
   parseFences,
+  tableOnly,
 } from "./markdown";
 import { assetUrl, clipboardFiles, isImageFile } from "./runtime";
 import {
@@ -150,6 +151,33 @@ const turndown = new TurndownService({
 turndown.addRule("strikethrough", {
   filter: ["del", "s"],
   replacement: (content) => `~~${content}~~`,
+});
+// Turndown leaves tables out of its Markdown by default. A table copied
+// from a rendered page should arrive as a GitHub-style pipe table.
+turndown.addRule("table", {
+  filter: "table",
+  replacement: (_content, node) => {
+    const table = node as HTMLTableElement;
+    const rows: string[][] = [];
+    for (const row of Array.from(table.rows)) {
+      const cells: string[] = [];
+      for (const cell of Array.from(row.cells)) {
+        cells.push((cell.textContent ?? "").replace(/\s+/g, " ").trim().replace(/\|/g, "\\|"));
+      }
+      if (cells.length > 0) rows.push(cells);
+    }
+    if (rows.length === 0) return "";
+    const width = Math.max(...rows.map((row) => row.length));
+    for (const row of rows) {
+      while (row.length < width) row.push("");
+    }
+    const lines = [
+      `| ${rows[0].join(" | ")} |`,
+      `| ${rows[0].map(() => "---").join(" | ")} |`,
+      ...rows.slice(1).map((row) => `| ${row.join(" | ")} |`),
+    ];
+    return "\n\n" + lines.join("\n") + "\n\n";
+  },
 });
 
 const saveCompartment = new Compartment();
@@ -824,6 +852,16 @@ function openDocument(payload: OpenPayload) {
   els.outline.hidden = !payload.outlineOpen;
   els.outlineResizer.hidden = !payload.outlineOpen;
   view.setState(makeEditorState(payload.content));
+  // A page that is only a table opens with the caret on the blank line
+  // after it, so the table is shown rendered instead of as the active
+  // source block. Clicking the table still enters its source.
+  if (payload.content.endsWith("\n")) {
+    const lines = payload.content.split("\n");
+    if (tableOnly(lines, parseFences(lines))) {
+      const end = view.state.doc.length;
+      view.dispatch({ selection: { anchor: end, head: end } });
+    }
+  }
   setReadOnly(payload.readOnly);
   loading = false;
   const focusTitle = Boolean(payload.focusTitle) && !isReadOnly();
@@ -1221,11 +1259,19 @@ async function handlePaste(event: ClipboardEvent) {
   if (html && html.trim()) {
     event.preventDefault();
     const markdownText = turndown.turndown(html).trim();
-    if (markdownText) insertText(markdownText, { block: false });
+    if (markdownText) insertPastedMarkdown(markdownText);
     return;
   }
   const text = data.getData("text/plain");
   if (text) {
+    // A plain Markdown table is inserted with a blank line after it, so
+    // its page opens with the table rendered rather than as the active
+    // source block. Other text keeps CodeMirror's own paste behavior.
+    if (isMarkdownTable(text)) {
+      event.preventDefault();
+      insertText(text.trimEnd() + "\n", { block: true });
+      return;
+    }
     // CodeMirror handles plain text, but a URL pasted over a selection
     // becomes a Markdown link in Obsidian.
     const { from, to } = view.state.selection.main;
@@ -1235,6 +1281,22 @@ async function handlePaste(event: ClipboardEvent) {
       insertText(`[${selected}](${text.trim()})`);
     }
   }
+}
+
+/** isMarkdownTable reports text that is one complete pipe table. */
+function isMarkdownTable(text: string): boolean {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  return tableOnly(lines, parseFences(lines)) !== null;
+}
+
+/** insertPastedMarkdown gives a pasted table its own blank line, so the
+ * caret starts outside the table and the table is rendered. */
+function insertPastedMarkdown(markdown: string): void {
+  if (isMarkdownTable(markdown)) {
+    insertText(markdown.trimEnd() + "\n", { block: true });
+    return;
+  }
+  insertText(markdown, { block: false });
 }
 
 async function insertFiles(files: File[]) {

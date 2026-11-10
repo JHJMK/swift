@@ -909,3 +909,31 @@ func TestNewDocumentFocusesTitleInWebEditor(t *testing.T) {
 		t.Fatalf("new document title = %q, want empty", p.Title)
 	}
 }
+
+// A web document keeps no rich text model until an export asks for one.
+func TestWebDocumentBuildsRichTextOnDemand(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	a.openDoc(rel)
+	a.doc.Web = true
+	a.doc.Doc = nil
+	a.refreshDocFromMarkdown()
+	if a.doc.Doc == nil {
+		t.Fatal("the export did not build the rich text model")
+	}
+}
+
+// A web document falling back to the native editor gets its rich text
+// model built first.
+func TestEnsureNativeDoc(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	a.openDoc(rel)
+	a.doc.Web = true
+	a.doc.Doc = nil
+	a.ensureNativeDoc()
+	if a.doc.Doc == nil {
+		t.Fatal("the native fallback has no document")
+	}
+	if a.doc.Doc.Text().PlainText() == "" {
+		t.Fatal("the fallback document is empty")
+	}
+}

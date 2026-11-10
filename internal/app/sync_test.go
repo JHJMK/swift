@@ -68,6 +68,9 @@ func TestSettingsRemoteSyncSection(t *testing.T) {
 	if err := tt.Click("设置"); err != nil {
 		t.Fatal(err)
 	}
+	if err := tt.Click("远端同步"); err != nil {
+		t.Fatal(err)
+	}
 	tt.Frame()
 	for _, want := range []string{"远端同步", "启用", "挂载点", "自动同步", "测试连接", "立即同步"} {
 		if !tt.HasText(want) {
@@ -368,6 +371,9 @@ func TestSettingsRemoteSyncS3Fields(t *testing.T) {
 	if err := tt.Click("设置"); err != nil {
 		t.Fatal(err)
 	}
+	if err := tt.Click("远端同步"); err != nil {
+		t.Fatal(err)
+	}
 	tt.Frame()
 	for _, want := range []string{"服务地址", "区域", "存储桶", "前缀", "Access Key", "Secret Key", "路径式地址"} {
 		if !tt.HasText(want) {
@@ -471,6 +477,9 @@ func TestManualSyncSettingsAndQuit(t *testing.T) {
 	if err := tt.Click("设置"); err != nil {
 		t.Fatal(err)
 	}
+	if err := tt.Click("远端同步"); err != nil {
+		t.Fatal(err)
+	}
 	tt.Frame()
 	for _, want := range []string{"关闭（仅手动）", "自动同步已关闭"} {
 		if !tt.HasText(want) {
@@ -505,8 +514,11 @@ func TestSettingsScrollsWithoutScrollbar(t *testing.T) {
 		SecretKey: "secret",
 		Manual:    true,
 	}
-	tt := ui.NewTester(a.view, 1180, 760)
+	tt := ui.NewTester(a.view, 1180, 520)
 	if err := tt.Click("设置"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("远端同步"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()

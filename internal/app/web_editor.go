@@ -261,6 +261,7 @@ func (a *app) setupEditorWebView() {
 			a.editorWeb = false
 			if a.doc != nil {
 				a.doc.Web = false
+				a.ensureNativeDoc()
 			}
 			a.update()
 		})
@@ -593,4 +594,22 @@ func (a *app) webOpenWikiLink(url string) bool {
 		return true
 	}
 	return false
+}
+
+// ensureNativeDoc builds the rich text model a web document left out,
+// for the native editor that takes over when the page never becomes
+// ready.
+func (a *app) ensureNativeDoc() {
+	if a.doc == nil || a.doc.Doc != nil {
+		return
+	}
+	md := a.doc.Markdown
+	text := richtext.ParseMarkdown(md)
+	if strings.TrimSpace(md) == "" {
+		text = richtext.NewText("")
+	}
+	text = a.loadImages(text, a.doc.Rel)
+	text, fences := a.annotateCodeFences(text, md)
+	a.doc.Doc = a.newNativeDocument(text)
+	a.doc.codeFences = fences
 }
