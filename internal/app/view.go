@@ -13,6 +13,7 @@ type dragItem struct {
 
 func (a *app) view(c *ui.Context) {
 	a.finishLakebookImport()
+	a.restartSyncIfPending()
 	a.applyTheme(c)
 	if result := a.syncNote.takeResult(); result != nil {
 		a.syncResult = result

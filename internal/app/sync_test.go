@@ -526,3 +526,55 @@ func TestSettingsScrollsWithoutScrollbar(t *testing.T) {
 	a.settingsOpen = false
 	tt.Frame()
 }
+
+// Saving the same settings while a sync runs must not restart its job;
+// changed settings wait for the running sync and then restart.
+func TestSyncSettingsDoNotInterruptRunningSync(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	mirror := t.TempDir()
+	a.cfg.Sync = remote.Settings{
+		Enabled:   true,
+		Provider:  remote.ProviderNFS,
+		MountPath: mirror,
+		Manual:    true,
+	}
+	if err := a.applySyncSettings(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(a.stopSync)
+	job := a.syncJob
+	if job == nil {
+		t.Fatal("sync job did not start")
+	}
+	job.busy.Store(true)
+
+	// Unchanged settings: 完成 only closes the window.
+	if err := a.applySyncSettings(); err != nil {
+		t.Fatal(err)
+	}
+	if a.syncJob != job || a.syncRestartPending {
+		t.Fatal("unchanged settings restarted the running sync")
+	}
+	select {
+	case <-job.done:
+		t.Fatal("unchanged settings cancelled the running sync")
+	default:
+	}
+
+	// Changed settings: save now, restart after the sync in flight.
+	a.cfg.Sync.IntervalSeconds = 30
+	if err := a.applySyncSettings(); err != nil {
+		t.Fatal(err)
+	}
+	if a.syncJob != job || !a.syncRestartPending {
+		t.Fatalf("changed settings did not wait: job=%p want=%p pending=%v", a.syncJob, job, a.syncRestartPending)
+	}
+	job.busy.Store(false)
+	a.restartSyncIfPending()
+	if a.syncJob == job {
+		t.Fatal("the pending sync restart did not start a new job")
+	}
+	if a.syncJob == nil || a.syncJob.settings.IntervalSeconds != 30 {
+		t.Fatalf("new job settings = %+v", a.syncJob)
+	}
+}

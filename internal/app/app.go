@@ -210,16 +210,17 @@ type app struct {
 
 	// syncJob mirrors the vault to the remote while it runs, and
 	// syncNote is the message the sync settings show.
-	syncJob          *syncJob
-	syncNote         syncNote
-	syncResult       *syncResultState
-	showSyncSecret   bool
-	sidebarCollapsed bool
-	treeCollapsed    bool
-	kbRailOpen       bool
-	syncRetryPending bool
-	refocusEditor    bool
-	quitting         bool
+	syncJob            *syncJob
+	syncNote           syncNote
+	syncResult         *syncResultState
+	showSyncSecret     bool
+	sidebarCollapsed   bool
+	treeCollapsed      bool
+	kbRailOpen         bool
+	syncRetryPending   bool
+	syncRestartPending bool
+	refocusEditor      bool
+	quitting           bool
 
 	// The Obsidian-style document page is a web view.
 	webView   *mygo.WebView

@@ -612,6 +612,36 @@ button {
   padding-right: 0.35em;
   text-align: right;
   color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.swift-list-number:hover,
+.swift-list-number:focus-visible {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+  outline: none;
+}
+
+.swift-list-number.is-editing {
+  background: var(--background-modifier-hover);
+}
+
+.swift-list-number-delimiter {
+  color: var(--text-muted);
+}
+
+.swift-list-number-input {
+  width: 2.5ch;
+  min-width: 1.5ch;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text-normal);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .swift-task {

@@ -37,6 +37,10 @@ type syncJob struct {
 	// edits: only a press of 立即同步 syncs.
 	manual   bool
 	onManual func(remote.Result, error)
+	onIdle   func()
+	// settings are the settings this job runs with, so a save of the same
+	// settings does not restart it.
+	settings remote.Settings
 }
 
 func (j *syncJob) Wake() {
@@ -89,6 +93,9 @@ func (j *syncJob) run(ctx context.Context, interval time.Duration) {
 			_ = j.engine.DeletePaths(ctx, prefixes)
 			j.busy.Store(false)
 			j.update()
+			if ctx.Err() == nil && j.onIdle != nil {
+				j.onIdle()
+			}
 		case <-j.wake:
 			// An edit is usually followed by another: wait for the
 			// typing to stop before reading the files.
@@ -111,6 +118,9 @@ func (j *syncJob) syncOnce(ctx context.Context) (remote.Result, error) {
 	res, err := j.engine.SyncNow(ctx)
 	j.busy.Store(false)
 	j.update()
+	if ctx.Err() == nil && j.onIdle != nil {
+		j.onIdle()
+	}
 	return res, err
 }
 
@@ -169,6 +179,9 @@ func (a *app) startSync() {
 		return
 	}
 	settings := a.cfg.Sync.Normalized()
+	if a.syncJob != nil && a.syncJob.settings == settings {
+		return
+	}
 	if err := a.validateSyncSettings(settings); err != nil {
 		// Keep a working mirror running when only the new settings are
 		// bad.
@@ -206,6 +219,12 @@ func (a *app) startSync() {
 		update:   a.update,
 		manual:   settings.Manual,
 		onManual: a.manualSyncDone,
+		onIdle: func() {
+			// Let the next frame restart the job; the sync goroutine must
+			// not wait for a main-thread start that waits for it.
+			a.update()
+		},
+		settings: settings,
 	}
 	a.syncJob = job
 	a.syncNote.set("", false)
@@ -251,17 +270,48 @@ func (a *app) syncTouch() {
 
 // applySyncSettings checks the settings, saves them and starts a job for
 // them. The old job keeps running when the new settings are not valid.
+// Settings that did not change never restart a running job, and a change
+// made while one is syncing waits for that sync to finish.
 func (a *app) applySyncSettings() error {
 	settings := a.cfg.Sync.WithDefaults()
 	if err := a.validateSyncSettings(settings); err != nil {
 		return err
 	}
-	a.cfg.Sync = settings.Normalized()
+	settings = settings.Normalized()
+	a.cfg.Sync = settings
 	if err := saveConfig(a.cfg); err != nil {
 		return fmt.Errorf("保存设置失败：%w", err)
 	}
+	if job := a.syncJob; job != nil {
+		if job.settings == settings {
+			a.syncRestartPending = false
+			return nil
+		}
+		if job.busy.Load() {
+			a.syncRestartPending = true
+			a.syncNote.set("设置已保存，当前同步结束后会重启同步。", false)
+			a.flashToast("设置已保存，当前同步结束后会重启同步")
+			return nil
+		}
+	}
+	a.syncRestartPending = false
 	a.startSync()
 	return nil
+}
+
+// restartSyncIfPending restarts the mirror after the sync that was in
+// flight when the settings changed has finished.
+func (a *app) restartSyncIfPending() {
+	if !a.syncRestartPending || a.quitting || a.vault == nil {
+		return
+	}
+	job := a.syncJob
+	if job == nil || job.busy.Load() {
+		return
+	}
+	a.syncRestartPending = false
+	a.startSync()
+	a.update()
 }
 
 // syncNow asks the running job to sync at once and reports whether

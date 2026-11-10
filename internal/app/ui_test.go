@@ -886,3 +886,26 @@ func TestSlashMenuAfterText(t *testing.T) {
 		t.Fatal("a URL opened the block menu")
 	}
 }
+
+// A new, untitled document opens with an empty title and asks the web
+// editor to put the caret there.
+func TestNewDocumentFocusesTitleInWebEditor(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	a.openDoc(rel)
+	if p := a.webOpenPayload(); p.FocusTitle || p.Title != "开始" {
+		t.Fatalf("normal document payload = %+v", p)
+	}
+	untitled, err := a.vault.CreateDoc("我的知识库", titleUntitled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.refreshTree()
+	a.openDoc(untitled)
+	p := a.webOpenPayload()
+	if !p.FocusTitle {
+		t.Fatal("new document did not ask to focus the title")
+	}
+	if p.Title != "" {
+		t.Fatalf("new document title = %q, want empty", p.Title)
+	}
+}

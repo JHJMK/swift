@@ -11,6 +11,7 @@ export interface WidgetContext {
    * loading does, so the text below it stays in step with the caret. */
   remeasure(): void;
   toggleTask(pos: number): void;
+  renumberList(pos: number, start: number): void;
   enter(pos: number): void;
 }
 
@@ -86,20 +87,99 @@ export class ListMarkerWidget extends WidgetType {
     readonly kind: "bullet" | "number",
     readonly text: string,
     readonly depth: number,
+    readonly pos: number,
+    readonly ctx: WidgetContext,
   ) {
     super();
   }
 
   eq(other: ListMarkerWidget): boolean {
-    return other.kind === this.kind && other.text === this.text && other.depth === this.depth;
+    return other.kind === this.kind && other.text === this.text &&
+      other.depth === this.depth && other.pos === this.pos &&
+      other.ctx.docId === this.ctx.docId;
   }
 
   toDOM(): HTMLElement {
     const span = el("span", `swift-list-marker swift-list-${this.kind}`);
-    span.textContent = this.kind === "number" ? this.text : "";
-    span.setAttribute("aria-hidden", "true");
-    if (this.kind === "number") span.style.minWidth = `${this.text.length + 0.5}ch`;
+    if (this.kind === "number") {
+      span.textContent = this.text;
+      span.setAttribute("role", "button");
+      span.tabIndex = 0;
+      span.title = "点击修改编号，后面的项会一起重新编号";
+      span.style.minWidth = `${this.text.length + 0.5}ch`;
+      const edit = (event: Event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.edit(span);
+      };
+      span.addEventListener("mousedown", (event) => {
+        if ((event.target as HTMLElement | null)?.tagName !== "INPUT") event.preventDefault();
+      });
+      span.addEventListener("click", edit);
+      span.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") edit(event);
+      });
+    } else {
+      span.setAttribute("aria-hidden", "true");
+    }
     return span;
+  }
+
+  /** edit turns the number into a field; Enter renumbers this item and
+   * the ordered items after it at the same indentation. */
+  private edit(marker: HTMLElement): void {
+    if (marker.querySelector("input")) return;
+    const original = this.text;
+    const value = Number.parseInt(original, 10) || 1;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.inputMode = "numeric";
+    input.pattern = "[0-9]*";
+    input.value = String(value);
+    input.className = "swift-list-number-input";
+    input.style.width = `${Math.max(1.5, String(value).length + 0.5)}ch`;
+    input.setAttribute("aria-label", "列表编号");
+    marker.textContent = "";
+    marker.classList.add("is-editing");
+    marker.appendChild(input);
+    const delimiter = document.createElement("span");
+    delimiter.className = "swift-list-number-delimiter";
+    delimiter.textContent = original.endsWith(")") ? ")" : ".";
+    marker.appendChild(delimiter);
+
+    let done = false;
+    const restore = () => {
+      marker.classList.remove("is-editing");
+      marker.textContent = original;
+      marker.focus();
+    };
+    const finish = (apply: boolean) => {
+      if (done) return;
+      done = true;
+      const next = Number.parseInt(input.value, 10);
+      marker.classList.remove("is-editing");
+      if (!apply || !Number.isFinite(next) || next < 1) {
+        restore();
+        return;
+      }
+      marker.textContent = `${next}${original.endsWith(")") ? ")" : "."}`;
+      this.ctx.renumberList(this.pos, Math.min(999999999, Math.trunc(next)));
+    };
+    input.addEventListener("mousedown", (event) => event.stopPropagation());
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        finish(true);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        finish(false);
+      }
+    });
+    input.addEventListener("blur", () => finish(true));
+    requestAnimationFrame(() => {
+      input.focus();
+      input.select();
+    });
   }
 
   ignoreEvent(): boolean {

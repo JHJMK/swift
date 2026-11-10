@@ -6,8 +6,10 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net"
 	"net/http"
@@ -42,7 +44,16 @@ type S3Store struct {
 
 	target   string
 	describe string
+
+	// retryDelay is how long to wait before attempt n + 1; tests make it
+	// zero.
+	retryDelay func(attempt int) time.Duration
 }
+
+// s3Attempts is how many times an upload is tried before it fails: a
+// CDN or a load balancer in front of the bucket may return a transient
+// 5xx while the object is stored or the next request succeeds.
+const s3Attempts = 4
 
 // NewS3Store opens the bucket s names.
 func NewS3Store(settings Settings) (*S3Store, error) {
@@ -81,6 +92,9 @@ func NewS3Store(settings Settings) (*S3Store, error) {
 		client:       &http.Client{Timeout: putTimeout},
 		target:       settings.Target(),
 		describe:     settings.Describe(),
+		retryDelay: func(attempt int) time.Duration {
+			return time.Duration(1<<uint(attempt-1)) * 500 * time.Millisecond
+		},
 	}
 	return s, nil
 }
@@ -119,7 +133,8 @@ func (s *S3Store) objectURL(rel string) (*url.URL, error) {
 	return u, nil
 }
 
-// PutFile uploads path as rel.
+// PutFile uploads path as rel. A 5xx or a network failure is tried
+// again: PUT of the same key and bytes is idempotent.
 func (s *S3Store) PutFile(ctx context.Context, rel, path string) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -141,38 +156,122 @@ func (s *S3Store) PutFile(ctx context.Context, rel, path string) error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u.String(), f)
-	if err != nil {
-		return err
-	}
-	req.ContentLength = info.Size()
 	contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(path)))
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
-	req.Header.Set("Content-Type", contentType)
-	signV4(req, hex.EncodeToString(h.Sum(nil)), s.accessKey, s.secretKey, s.sessionToken, s.region, time.Now())
-	if err := s.do(req); err != nil {
-		return fmt.Errorf("上传 %s 失败：%w", rel, err)
+	payloadHash := hex.EncodeToString(h.Sum(nil))
+	var lastErr error
+	for attempt := 1; attempt <= s3Attempts; attempt++ {
+		if attempt > 1 {
+			if err := s.waitRetry(ctx, attempt-1); err != nil {
+				return fmt.Errorf("上传 %s 失败：%w", rel, err)
+			}
+		}
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+		// A section reader keeps the file open across attempts: the HTTP
+		// client closes a body that is an io.Closer.
+		req, err := http.NewRequestWithContext(ctx, http.MethodPut, u.String(),
+			io.NewSectionReader(f, 0, info.Size()))
+		if err != nil {
+			return err
+		}
+		req.ContentLength = info.Size()
+		req.Header.Set("Content-Type", contentType)
+		signV4(req, payloadHash, s.accessKey, s.secretKey, s.sessionToken, s.region, time.Now())
+		lastErr = s.do(req)
+		if lastErr == nil {
+			return nil
+		}
+		if !s.retryable(lastErr) {
+			break
+		}
+		log.Printf("swift: s3 upload %s: attempt %d failed: %v", rel, attempt, lastErr)
 	}
-	return nil
+	if lastErr == nil {
+		return nil
+	}
+	if s.retryable(lastErr) {
+		return fmt.Errorf("上传 %s 失败（已尝试 %d 次）：%w", rel, s3Attempts, lastErr)
+	}
+	return fmt.Errorf("上传 %s 失败：%w", rel, lastErr)
 }
 
-// Delete removes rel.
+// waitRetry waits before the next attempt, or returns early when the
+// sync is cancelled.
+func (s *S3Store) waitRetry(ctx context.Context, attempt int) error {
+	delay := time.Duration(0)
+	if s.retryDelay != nil {
+		delay = s.retryDelay(attempt)
+	}
+	if delay <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// retryable reports whether an upload may succeed if sent again.
+func (s *S3Store) retryable(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var httpErr *s3HTTPError
+	if errors.As(err, &httpErr) {
+		switch httpErr.Status {
+		case http.StatusTooManyRequests, http.StatusInternalServerError,
+			http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+			return true
+		}
+		return false
+	}
+	// A connection reset or a temporary network failure can be tried
+	// again; a missing file or a cancelled context cannot.
+	return true
+}
+
+// Delete removes rel, trying again when the store is briefly unavailable.
 func (s *S3Store) Delete(ctx context.Context, rel string) error {
 	u, err := s.objectURL(rel)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, u.String(), nil)
-	if err != nil {
-		return err
+	var lastErr error
+	for attempt := 1; attempt <= s3Attempts; attempt++ {
+		if attempt > 1 {
+			if err := s.waitRetry(ctx, attempt-1); err != nil {
+				return fmt.Errorf("删除远端 %s 失败：%w", rel, err)
+			}
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, u.String(), nil)
+		if err != nil {
+			return err
+		}
+		signV4(req, emptyPayloadHash, s.accessKey, s.secretKey, s.sessionToken, s.region, time.Now())
+		lastErr = s.do(req)
+		if lastErr == nil {
+			return nil
+		}
+		if !s.retryable(lastErr) {
+			break
+		}
+		log.Printf("swift: s3 delete %s: attempt %d failed: %v", rel, attempt, lastErr)
 	}
-	signV4(req, emptyPayloadHash, s.accessKey, s.secretKey, s.sessionToken, s.region, time.Now())
-	if err := s.do(req); err != nil {
-		return fmt.Errorf("删除远端 %s 失败：%w", rel, err)
+	if lastErr == nil {
+		return nil
 	}
-	return nil
+	if s.retryable(lastErr) {
+		return fmt.Errorf("删除远端 %s 失败（已尝试 %d 次）：%w", rel, s3Attempts, lastErr)
+	}
+	return fmt.Errorf("删除远端 %s 失败：%w", rel, lastErr)
 }
 
 // Ping writes and removes a small object, which checks the address, the
@@ -185,15 +284,31 @@ func (s *S3Store) Ping(ctx context.Context) error {
 	}
 	body := []byte("ok")
 	h := sha256.Sum256(body)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u.String(), bytes.NewReader(body))
-	if err != nil {
-		return err
+	var lastErr error
+	for attempt := 1; attempt <= s3Attempts; attempt++ {
+		if attempt > 1 {
+			if err := s.waitRetry(ctx, attempt-1); err != nil {
+				return fmt.Errorf("写入测试对象失败：%w", err)
+			}
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPut, u.String(), bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		req.ContentLength = int64(len(body))
+		req.Header.Set("Content-Type", "text/plain")
+		signV4(req, hex.EncodeToString(h[:]), s.accessKey, s.secretKey, s.sessionToken, s.region, time.Now())
+		lastErr = s.do(req)
+		if lastErr == nil {
+			break
+		}
+		if !s.retryable(lastErr) {
+			break
+		}
+		log.Printf("swift: s3 probe: attempt %d failed: %v", attempt, lastErr)
 	}
-	req.ContentLength = int64(len(body))
-	req.Header.Set("Content-Type", "text/plain")
-	signV4(req, hex.EncodeToString(h[:]), s.accessKey, s.secretKey, s.sessionToken, s.region, time.Now())
-	if err := s.do(req); err != nil {
-		return fmt.Errorf("写入测试对象失败：%w", err)
+	if lastErr != nil {
+		return fmt.Errorf("写入测试对象失败：%w", lastErr)
 	}
 	if err := s.Delete(ctx, rel); err != nil {
 		return fmt.Errorf("删除测试对象失败：%w", err)
@@ -221,7 +336,22 @@ func (s *S3Store) do(req *http.Request) error {
 	if message == "" {
 		message = http.StatusText(resp.StatusCode)
 	}
-	return fmt.Errorf("S3 返回 %d：%s", resp.StatusCode, truncate(message, 400))
+	return &s3HTTPError{Status: resp.StatusCode, Message: truncate(message, 400)}
+}
+
+// s3HTTPError is an error status S3 or something in front of it returned.
+type s3HTTPError struct {
+	Status  int
+	Message string
+}
+
+func (e *s3HTTPError) Error() string {
+	message := fmt.Sprintf("S3 返回 %d：%s", e.Status, e.Message)
+	if (e.Status == http.StatusBadGateway || e.Status == http.StatusServiceUnavailable ||
+		e.Status == http.StatusGatewayTimeout) && strings.Contains(strings.ToLower(e.Message), "<html") {
+		message += "（可能是 CDN 或反向代理的临时错误；若持续出现，请确认服务地址指向对象存储源站）"
+	}
+	return message
 }
 
 // signV4 adds AWS Signature Version 4 headers to req, signing host, the

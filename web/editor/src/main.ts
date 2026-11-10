@@ -48,6 +48,11 @@ import {
 } from "./markdown";
 import { assetUrl, clipboardFiles, isImageFile } from "./runtime";
 import {
+  readBlockLine,
+  transformBlockLines,
+  type BlockKind,
+} from "./lists";
+import {
   attachView,
   holdCodeFences,
   livePreview,
@@ -821,8 +826,16 @@ function openDocument(payload: OpenPayload) {
   view.setState(makeEditorState(payload.content));
   setReadOnly(payload.readOnly);
   loading = false;
-  view.focus();
-  void bridge.call<void>(`${SERVICE}.SetFocused`, !isReadOnly()).catch(() => undefined);
+  const focusTitle = Boolean(payload.focusTitle) && !isReadOnly();
+  if (focusTitle) {
+    // A new, untitled page wants its title first; its body is one Tab or
+    // Down press away.
+    setTitle(payload.title, true);
+    void bridge.call<void>(`${SERVICE}.SetFocused`, false).catch(() => undefined);
+  } else {
+    view.focus();
+    void bridge.call<void>(`${SERVICE}.SetFocused`, !isReadOnly()).catch(() => undefined);
+  }
   els.scroller.scrollTop = 0;
   updateCount();
   renderOutline();
@@ -952,41 +965,6 @@ function wrapSelection(before: string, after = before) {
   view.focus();
 }
 
-type BlockKind = "paragraph" | "heading" | "bullet" | "ordered" | "task" | "quote";
-
-interface BlockInfo {
-  indent: string;
-  prefix: string;
-  content: string;
-  kind: BlockKind;
-  level: number;
-}
-
-/** readBlockLine splits a line into its indent and one block prefix. */
-function readBlockLine(text: string): BlockInfo {
-  const match = /^(\s*)(#{1,6}[ \t]+|>[ \t]?|[-*+][ \t]+(?:\[[ xX]\][ \t]+)?|\d{1,9}[.)][ \t]+)/.exec(text);
-  if (!match) {
-    const indent = /^\s*/.exec(text)?.[0] ?? "";
-    return { indent, prefix: "", content: text.slice(indent.length), kind: "paragraph", level: 0 };
-  }
-  const indent = match[1];
-  const prefix = match[2];
-  const content = text.slice(match[0].length);
-  if (prefix.startsWith("#")) {
-    return { indent, prefix, content, kind: "heading", level: prefix.trim().length };
-  }
-  if (prefix.startsWith(">")) {
-    return { indent, prefix, content, kind: "quote", level: 0 };
-  }
-  if (/^[-*+][ \t]+\[[ xX]\][ \t]+$/.test(prefix)) {
-    return { indent, prefix, content, kind: "task", level: 0 };
-  }
-  if (/^[-*+][ \t]+$/.test(prefix)) {
-    return { indent, prefix, content, kind: "bullet", level: 0 };
-  }
-  return { indent, prefix, content, kind: "ordered", level: 0 };
-}
-
 /** hasNode reports whether pos sits inside one of the Markdown nodes. */
 function hasNode(pos: number, names: string[]): boolean {
   let node: any = syntaxTree(view.state).resolveInner(pos, -1);
@@ -1075,47 +1053,52 @@ function fenceEnter(view: EditorView): boolean {
   return true;
 }
 
-function blockPrefix(kind: BlockKind, level: number): string {
-  switch (kind) {
-    case "heading":
-      return "#".repeat(Math.max(1, Math.min(6, level))) + " ";
-    case "bullet":
-      return "- ";
-    case "ordered":
-      return "1. ";
-    case "task":
-      return "- [ ] ";
-    case "quote":
-      return "> ";
-    default:
-      return "";
-  }
+/** selectedLines returns the lines a selection covers; a selection that
+ * ends at a line's start does not include that line. */
+function selectedLines() {
+  const { from, to } = view.state.selection.main;
+  const first = view.state.doc.lineAt(from);
+  let last = view.state.doc.lineAt(to);
+  if (to > from && last.from === to) last = view.state.doc.line(last.number - 1);
+  return { first, last };
 }
 
-/** setBlockKind changes the current line to a heading, list or quote. */
+/** setBlockKind changes every selected line to a heading, list or quote.
+ * A second press removes the style from all of them. */
 function setBlockKind(kind: BlockKind, level = 0) {
   if (isReadOnly()) return;
   if (hasNode(view.state.selection.main.head, ["FencedCode", "CodeBlock"])) return;
   const { from, to } = view.state.selection.main;
-  const line = view.state.doc.lineAt(from);
-  const info = readBlockLine(line.text);
-  const same =
-    (kind === "paragraph" && info.kind === "paragraph") ||
-    (kind === "heading" && info.kind === "heading" && info.level === level) ||
-    (kind !== "paragraph" && kind !== "heading" && info.kind === kind);
-  const nextPrefix = same ? "" : blockPrefix(kind, level);
-  const oldConsumed = info.prefix.length;
-  const startOffset = Math.max(0, from - line.from - info.indent.length - oldConsumed);
-  const endOffset = to > line.to
-    ? info.content.length
-    : Math.max(0, to - line.from - info.indent.length - oldConsumed);
-  const newText = info.indent + nextPrefix + info.content;
-  const base = line.from + info.indent.length + nextPrefix.length;
-  const anchor = base + Math.min(startOffset, info.content.length);
-  const head = base + Math.min(Math.max(endOffset, startOffset), info.content.length);
+  const { first, last } = selectedLines();
+  const lines: string[] = [];
+  for (let n = first.number; n <= last.number; n++) lines.push(view.state.doc.line(n).text);
+  const nextLines = transformBlockLines(lines, kind, level);
+  const newText = nextLines.join("\n");
+  if (newText === view.state.doc.sliceString(first.from, last.to)) {
+    view.focus();
+    return;
+  }
+
+  const starts: number[] = [];
+  let at = first.from;
+  for (const text of nextLines) {
+    starts.push(at);
+    at += text.length + 1;
+  }
+  const mapPosition = (pos: number): number => {
+    if (pos > last.to) return starts[starts.length - 1] + nextLines[nextLines.length - 1].length;
+    const line = view.state.doc.lineAt(pos);
+    const index = line.number - first.number;
+    const oldInfo = readBlockLine(line.text);
+    const newInfo = readBlockLine(nextLines[index]);
+    const oldContentStart = line.from + oldInfo.indent.length + oldInfo.prefix.length;
+    const newContentStart = starts[index] + newInfo.indent.length + newInfo.prefix.length;
+    if (pos <= oldContentStart) return newContentStart;
+    return newContentStart + Math.min(pos - oldContentStart, newInfo.content.length);
+  };
   view.dispatch({
-    changes: { from: line.from, to: line.to, insert: newText },
-    selection: { anchor, head },
+    changes: { from: first.from, to: last.to, insert: newText },
+    selection: { anchor: mapPosition(from), head: mapPosition(to) },
   });
   view.focus();
 }
@@ -1488,15 +1471,21 @@ function refreshToolbar() {
   if (blockLabel) {
     blockLabel.textContent = info.kind === "heading" ? `标题 ${info.level}` : "正文";
   }
+  const { first, last } = selectedLines();
+  const selected: { text: string }[] = [];
+  for (let n = first.number; n <= last.number; n++) selected.push(view.state.doc.line(n));
+  const nonBlank = selected.filter((line) => line.text.trim() !== "");
+  const inspect = nonBlank.length > 0 ? nonBlank : selected;
+  const allKind = (kind: BlockKind) => inspect.length > 0 && inspect.every((line) => readBlockLine(line.text).kind === kind);
   setToolbarActive("bold", hasNode(head, ["StrongEmphasis"]));
   setToolbarActive("italic", hasNode(head, ["Emphasis"]));
   setToolbarActive("strike", hasNode(head, ["Strikethrough"]));
   setToolbarActive("code", hasNode(head, ["InlineCode"]));
   setToolbarActive("link", hasNode(head, ["Link"]));
-  setToolbarActive("bullet", info.kind === "bullet");
-  setToolbarActive("ordered", info.kind === "ordered");
-  setToolbarActive("task", info.kind === "task");
-  setToolbarActive("quote", info.kind === "quote");
+  setToolbarActive("bullet", allKind("bullet"));
+  setToolbarActive("ordered", allKind("ordered"));
+  setToolbarActive("task", allKind("task"));
+  setToolbarActive("quote", allKind("quote"));
   setToolbarActive("codeblock", hasNode(head, ["FencedCode", "CodeBlock"]));
 }
 

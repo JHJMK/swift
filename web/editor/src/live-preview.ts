@@ -12,6 +12,7 @@ import {
   type TableBlock,
 } from "./markdown";
 import { cachedMermaidSvg } from "./mermaid";
+import { renumberOrderedFrom } from "./lists";
 import {
   CodeFlairWidget,
   HrWidget,
@@ -109,6 +110,24 @@ function build(
       view.dispatch({
         changes: { from: pos, to: pos + 1, insert: checked ? " " : "x" },
       });
+    },
+    renumberList(pos, start) {
+      if (options.preview()) return;
+      const view = viewRef;
+      if (!view) return;
+      const doc = view.state.doc;
+      const first = doc.lineAt(pos).number;
+      const lines: string[] = [];
+      for (let i = first; i <= doc.lines; i++) lines.push(doc.line(i).text);
+      const next = renumberOrderedFrom(lines, 0, start);
+      const changes: { from: number; to: number; insert: string }[] = [];
+      for (let i = 0; i < next.length; i++) {
+        if (next[i] === lines[i]) continue;
+        const line = doc.line(first + i);
+        changes.push({ from: line.from, to: line.to, insert: next[i] });
+      }
+      if (changes.length > 0) view.dispatch({ changes });
+      view.focus();
     },
     enter(pos) {
       const view = viewRef;
@@ -584,8 +603,8 @@ function build(
       const depth = Math.min(8, Math.floor(indent / 2));
       addLine(n, `swift-list-line swift-list-depth-${depth}${isActive ? " swift-active-line" : ""}`);
       const marker = numbered
-        ? new ListMarkerWidget("number", list[2], depth)
-        : new ListMarkerWidget("bullet", "", depth);
+        ? new ListMarkerWidget("number", list[2], depth, line.from, ctx)
+        : new ListMarkerWidget("bullet", "", depth, line.from, ctx);
       const from = line.from + indent;
       const to = line.from + contentStart;
       decos.push(Decoration.replace({ widget: marker }).range(from, to));
