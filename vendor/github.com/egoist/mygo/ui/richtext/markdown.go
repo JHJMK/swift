@@ -41,18 +41,14 @@ func (t Text) Markdown() string {
 		}
 		switch {
 		case st.CodeBlock:
-			blockID := st.CodeBlockID
-			sameBlock := func(k int) bool {
-				return paras[k].Style.CodeBlock && paras[k].Style.CodeBlockID == blockID
-			}
 			fence := "```"
-			for k := i; k < len(paras) && sameBlock(k); k++ {
+			for k := i; k < len(paras) && paras[k].Style.CodeBlock; k++ {
 				for strings.Contains(plainOf(paras[k]), fence) {
 					fence += "`"
 				}
 			}
-			b.WriteString(quote + fence + fenceInfo(st.Language, st.CodeBlockTitle) + "\n")
-			for ; i < len(paras) && sameBlock(i); i++ {
+			b.WriteString(quote + fence + "\n")
+			for ; i < len(paras) && paras[i].Style.CodeBlock; i++ {
 				b.WriteString(quote + plainOf(paras[i]) + "\n")
 			}
 			i--

@@ -61,9 +61,10 @@ type docState struct {
 	// app reads where it is and does not write.
 	ReadOnly bool
 
-	// mermaidPreviews are the rendered diagrams shown above their source;
-	// they are left out of the Markdown written.
-	mermaidPreviews map[string]bool
+	// codeFences keeps the language and title of the fenced code blocks,
+	// by paragraph ID: the editor carries the text, not Markdown's info
+	// string, so the app puts it back when it saves.
+	codeFences map[string]codeFenceInfo
 
 	// externalConflict and externalDeleted remember that the file on disk
 	// was changed or removed while the page had unsaved edits, so the
@@ -128,7 +129,10 @@ type app struct {
 
 	selected      string
 	selectedIsDir bool
-	openDirs      map[string]*bool
+	// allKBs shows the page listing every knowledge base, with the
+	// sidebar's 常用 list beside it.
+	allKBs   bool
+	openDirs map[string]*bool
 
 	doc         *docState
 	previewMode bool
@@ -141,6 +145,7 @@ type app struct {
 	firstDoc *firstDocState
 
 	settingsOpen     bool
+	settingsSection  string
 	pageSettingsOpen bool
 	trashOpen        bool
 	trash            []TrashEntry
@@ -166,9 +171,11 @@ type app struct {
 	blockMenuOpen    bool
 	docMoreOpen      bool
 	// rowMenu is the node whose tree row menu shows, by its path, and
-	// rowPlus the node whose add menu shows.
-	rowMenu string
-	rowPlus string
+	// rowPlus the node whose add menu shows. cardMenu is the knowledge
+	// base card whose menu shows on the all-knowledge-bases page.
+	rowMenu  string
+	rowPlus  string
+	cardMenu string
 
 	// clipboard holds the document or folder copied in the tree.
 	clipboard *clipboardState
@@ -192,7 +199,7 @@ type app struct {
 	// focusBody puts the caret at the start of the text after a title is
 	// entered.
 	focusBody   bool
-	focusTitle  bool
+	saveWake    *time.Timer
 	toast       string
 	toastUntil  time.Time
 	lakebookJob *lakebookImportJob
@@ -205,21 +212,20 @@ type app struct {
 
 	// syncJob mirrors the vault to the remote while it runs, and
 	// syncNote is the message the sync settings show.
-	syncJob          *syncJob
-	syncNote         syncNote
-	syncResult       *syncResultState
-	showSyncSecret   bool
-	codeTitleEditing int
-	sidebarCollapsed bool
-	treeCollapsed    bool
-	kbRailOpen       bool
-	codeTitleFocus   bool
-	codeTitleFocused bool
-	syncRetryPending bool
-	refocusEditor    bool
-	mermaidRefresh   bool
-	mermaidEditing   int
-	quitting         bool
+	syncJob             *syncJob
+	syncNote            syncNote
+	syncResult          *syncResultState
+	showSyncSecret      bool
+	sidebarCollapsed    bool
+	treeCollapsed       bool
+	kbRailOpen          bool
+	syncRetryPending    bool
+	syncRestartPending  bool
+	hideAfterFullScreen bool
+	refocusEditor       bool
+	quitting            bool
+
+	tray *mygo.Tray
 
 	// The Obsidian-style document page is a web view.
 	webView   *mygo.WebView
@@ -325,10 +331,8 @@ func (a *app) update() {
 
 // openDoc shows a document in the editor.
 func (a *app) openDoc(rel string) {
+	a.allKBs = false
 	a.findOpen = false
-	a.codeTitleEditing = 0
-	a.codeTitleFocus = false
-	a.codeTitleFocused = false
 	if a.doc != nil && a.doc.Rel == rel {
 		a.selected = rel
 		a.selectedIsDir = false
@@ -342,26 +346,28 @@ func (a *app) openDoc(rel string) {
 		return
 	}
 	web := a.editorWeb && a.webView != nil
-	text := richtext.ParseMarkdown(md)
-	if strings.TrimSpace(md) == "" {
-		text = richtext.NewText("")
-	}
-	var previews map[string]bool
 	saved := md
+	var fences map[string]codeFenceInfo
+	var document *richtext.Document
 	if !web {
+		text := richtext.ParseMarkdown(md)
+		if strings.TrimSpace(md) == "" {
+			text = richtext.NewText("")
+		}
 		text = a.loadImages(text, rel)
-		text, previews = a.addMermaidPreviews(text, rel)
-		saved = text.Markdown()
+		text, fences = a.annotateCodeFences(text, md)
+		document = a.newNativeDocument(text)
+		saved = nativeMarkdown(document.Text(), fences)
 	}
 	a.doc = &docState{
-		Rel:             rel,
-		Title:           titleOf(rel),
-		Doc:             richtext.NewDocument(text),
-		Saved:           saved,
-		Markdown:        md,
-		Web:             web,
-		MTime:           mtime,
-		mermaidPreviews: previews,
+		Rel:        rel,
+		Title:      titleOf(rel),
+		Doc:        document,
+		Saved:      saved,
+		Markdown:   md,
+		Web:        web,
+		MTime:      mtime,
+		codeFences: fences,
 	}
 	a.previewMode = false
 	a.loadPageSettings(a.doc)
@@ -446,7 +452,7 @@ func (a *app) flushDoc() {
 	}
 	md := doc.Markdown
 	if !doc.Web {
-		md = doc.Doc.Text().Markdown()
+		md = nativeMarkdown(doc.Doc.Text(), doc.codeFences)
 	}
 	if md == doc.Saved && !doc.Note {
 		doc.Dirty = false
@@ -475,9 +481,6 @@ func (a *app) flushDoc() {
 		}
 		return
 	}
-	if !doc.Web && len(doc.mermaidPreviews) > 0 {
-		md = stripMermaidPreviews(md, doc.mermaidPreviews)
-	}
 	mtime, err := a.vault.WriteDoc(doc.Rel, md)
 	if err != nil {
 		a.setError(err)
@@ -504,11 +507,19 @@ func (a *app) markDocDirty() {
 	}
 	a.doc.Dirty = true
 	a.saveAt = time.Now().Add(600 * time.Millisecond)
-	win := a.win
-	if win != nil {
-		time.AfterFunc(650*time.Millisecond, func() {
+	if a.win == nil {
+		return
+	}
+	// One timer redraws the page after the typing stops. Scheduling a
+	// timer for every keystroke used to wake the main thread repeatedly
+	// for a save that waits for the same quiet spell.
+	if a.saveWake == nil {
+		win := a.win
+		a.saveWake = time.AfterFunc(650*time.Millisecond, func() {
 			win.Update(func() {})
 		})
+	} else {
+		a.saveWake.Reset(650 * time.Millisecond)
 	}
 }
 
@@ -597,7 +608,7 @@ func (a *app) insertImage() {
 }
 
 func (a *app) wordCount() int {
-	if a.doc == nil {
+	if a.doc == nil || a.doc.Doc == nil {
 		return 0
 	}
 	return countWords(a.doc.Doc.Text().PlainText())
@@ -640,7 +651,7 @@ func (a *app) newParent() (string, bool) {
 	if len(a.tree) > 0 {
 		return a.tree[0].Rel, true
 	}
-	kb, err := a.vault.CreateKnowledgeBase("我的知识库")
+	kb, err := a.createKnowledgeBase("我的知识库")
 	if err != nil {
 		a.setError(err)
 		return "", false
@@ -659,10 +670,11 @@ func (a *app) askNewKnowledgeBase() {
 		Value:   "新知识库",
 		OKLabel: "创建",
 		OnOK: func(value string) error {
-			rel, err := a.vault.CreateKnowledgeBase(value)
+			rel, err := a.createKnowledgeBase(value)
 			if err != nil {
 				return err
 			}
+			a.allKBs = false
 			a.selected = rel
 			a.selectedIsDir = true
 			a.openState(rel)
@@ -707,6 +719,7 @@ func (a *app) askNewFolderTitled(parent, title, value string) {
 			*a.openState(rel) = true
 			a.flushDoc()
 			a.doc = nil
+			a.allKBs = false
 			a.selected = rel
 			a.selectedIsDir = true
 			a.refreshTree()
@@ -758,7 +771,7 @@ func (a *app) createFirstDoc() error {
 	if title == "" {
 		title = titleUntitled
 	}
-	kb, err := a.vault.CreateKnowledgeBase(kbName)
+	kb, err := a.createKnowledgeBase(kbName)
 	if err != nil {
 		return err
 	}
@@ -829,9 +842,7 @@ func (a *app) openNote() {
 	if a.doc != nil && a.doc.Note {
 		return
 	}
-	a.codeTitleEditing = 0
-	a.codeTitleFocus = false
-	a.codeTitleFocused = false
+	a.allKBs = false
 	a.flushTitle()
 	a.flushDoc()
 	title, body, err := a.vault.ReadNote()
@@ -843,22 +854,28 @@ func (a *app) openNote() {
 		title = "小记"
 	}
 	web := a.editorWeb && a.webView != nil
-	text := richtext.ParseMarkdown(body)
-	if strings.TrimSpace(body) == "" {
-		text = richtext.NewText("")
-	}
+	var fences map[string]codeFenceInfo
+	var document *richtext.Document
 	saved := body
 	if !web {
+		text := richtext.ParseMarkdown(body)
+		if strings.TrimSpace(body) == "" {
+			text = richtext.NewText("")
+		}
 		text = a.loadImages(text, "")
+		text, fences = a.annotateCodeFences(text, body)
+		document = a.newNativeDocument(text)
+		saved = nativeMarkdown(document.Text(), fences)
 	}
 	a.doc = &docState{
-		Note:     true,
-		Title:    title,
-		Doc:      richtext.NewDocument(text),
-		Saved:    saved,
-		Markdown: body,
-		Web:      web,
-		MTime:    time.Now(),
+		Note:       true,
+		Title:      title,
+		Doc:        document,
+		Saved:      saved,
+		Markdown:   body,
+		Web:        web,
+		MTime:      time.Now(),
+		codeFences: fences,
 	}
 	a.previewMode = false
 	a.loadPageSettings(a.doc)
@@ -883,7 +900,7 @@ func (a *app) askNoteSaveTo() {
 	a.flushTitle()
 	a.flushDoc()
 	if len(a.tree) == 0 {
-		if _, err := a.vault.CreateKnowledgeBase("我的知识库"); err != nil {
+		if _, err := a.createKnowledgeBase("我的知识库"); err != nil {
 			a.setError(err)
 			return
 		}
@@ -910,9 +927,9 @@ func (a *app) saveNoteTo(rel string) error {
 	if title == "" {
 		title = "小记"
 	}
-	md := a.doc.Doc.Text().Markdown()
-	if a.doc.Web {
-		md = a.doc.Markdown
+	md := a.doc.Markdown
+	if !a.doc.Web {
+		md = nativeMarkdown(a.doc.Doc.Text(), a.doc.codeFences)
 	}
 	dir, err := a.pickerDir(rel)
 	if err != nil {
@@ -1060,6 +1077,11 @@ func (a *app) renameNode(rel, value string) error {
 	if err != nil {
 		return err
 	}
+	if !strings.Contains(rel, "/") && rel != newRel {
+		if err := a.renameKBPin(rel, newRel); err != nil {
+			a.setError(err)
+		}
+	}
 	if openUnder {
 		moved := newRel + strings.TrimPrefix(a.doc.Rel, rel)
 		a.doc = nil
@@ -1097,6 +1119,11 @@ func (a *app) askDelete(rel string) {
 			if err := a.vault.Trash(rel); err != nil {
 				a.setError(err)
 				return
+			}
+			if !strings.Contains(rel, "/") {
+				if err := a.forgetKBPin(rel); err != nil {
+					a.setError(err)
+				}
 			}
 			if docAffected {
 				a.doc = nil
@@ -1714,6 +1741,7 @@ func (a *app) findNext(dir int) {
 func (a *app) chooseTree(n *Node) {
 	a.flushTitle()
 	a.flushDoc()
+	a.allKBs = false
 	a.selected = n.Rel
 	a.selectedIsDir = n.IsDir
 	if n.IsDir {
@@ -1958,11 +1986,9 @@ func (a *app) writeMarkdownZip(dst, title string) error {
 		return errors.New("没有打开的文档")
 	}
 	a.flushDoc()
-	md := a.doc.Doc.Text().Markdown()
-	if a.doc.Web {
-		md = a.doc.Markdown
-	} else if len(a.doc.mermaidPreviews) > 0 {
-		md = stripMermaidPreviews(md, a.doc.mermaidPreviews)
+	md := a.doc.Markdown
+	if !a.doc.Web {
+		md = nativeMarkdown(a.doc.Doc.Text(), a.doc.codeFences)
 	}
 	tmp, err := os.MkdirTemp("", "swift-markdown-")
 	if err != nil {

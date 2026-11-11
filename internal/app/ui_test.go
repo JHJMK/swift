@@ -753,21 +753,6 @@ func TestBodyPlaceholderHidesForBlocks(t *testing.T) {
 	}
 }
 
-// Right clicking the text offers the two paste commands.
-func TestEditorContextMenu(t *testing.T) {
-	a, _, rel := newTestApp(t)
-	a.openDoc(rel)
-	tt := ui.NewTester(a.view, 1180, 760)
-	tt.Frame()
-	tt.RightClickAt(700, 300)
-	tt.Frame()
-	for _, want := range []string{"粘贴", "粘贴并匹配样式"} {
-		if !tt.HasText(want) {
-			t.Fatalf("editor menu lacks %q: %q", want, tt.Texts())
-		}
-	}
-}
-
 // createDocFromWorkbench creates a document through the workbench card
 // and its location picker, choosing the default knowledge base.
 func createDocFromWorkbench(t *testing.T, tt *ui.Tester) {
@@ -899,5 +884,56 @@ func TestSlashMenuAfterText(t *testing.T) {
 	tt.Frame()
 	if a.insertMenuOpen {
 		t.Fatal("a URL opened the block menu")
+	}
+}
+
+// A new, untitled document opens with an empty title and asks the web
+// editor to put the caret there.
+func TestNewDocumentFocusesTitleInWebEditor(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	a.openDoc(rel)
+	if p := a.webOpenPayload(); p.FocusTitle || p.Title != "开始" {
+		t.Fatalf("normal document payload = %+v", p)
+	}
+	untitled, err := a.vault.CreateDoc("我的知识库", titleUntitled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.refreshTree()
+	a.openDoc(untitled)
+	p := a.webOpenPayload()
+	if !p.FocusTitle {
+		t.Fatal("new document did not ask to focus the title")
+	}
+	if p.Title != "" {
+		t.Fatalf("new document title = %q, want empty", p.Title)
+	}
+}
+
+// A web document keeps no rich text model until an export asks for one.
+func TestWebDocumentBuildsRichTextOnDemand(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	a.openDoc(rel)
+	a.doc.Web = true
+	a.doc.Doc = nil
+	a.refreshDocFromMarkdown()
+	if a.doc.Doc == nil {
+		t.Fatal("the export did not build the rich text model")
+	}
+}
+
+// A web document falling back to the native editor gets its rich text
+// model built first.
+func TestEnsureNativeDoc(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	a.openDoc(rel)
+	a.doc.Web = true
+	a.doc.Doc = nil
+	a.ensureNativeDoc()
+	if a.doc.Doc == nil {
+		t.Fatal("the native fallback has no document")
+	}
+	if a.doc.Doc.Text().PlainText() == "" {
+		t.Fatal("the fallback document is empty")
 	}
 }

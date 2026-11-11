@@ -137,128 +137,103 @@ func (a *app) confirmModal(c *ui.Context) {
 	}
 }
 
+const (
+	settingsWorkspace = "workspace"
+	settingsDisplay   = "display"
+	settingsSync      = "sync"
+	settingsLogs      = "logs"
+	settingsAbout     = "about"
+)
+
 func (a *app) settingsModal(c *ui.Context) {
 	if !a.settingsOpen {
 		return
 	}
+	switch a.settingsSection {
+	case settingsWorkspace, settingsDisplay, settingsSync, settingsLogs, settingsAbout:
+	default:
+		a.settingsSection = settingsWorkspace
+	}
 	t := c.Theme()
+	windowWidth, windowHeight := c.Size()
+	width := float32(820)
+	if windowWidth-60 < width {
+		width = windowWidth - 60
+	}
+	if width < 680 {
+		width = 680
+	}
+	height := float32(600)
+	if windowHeight-80 < height {
+		height = windowHeight - 80
+	}
+	if height < 420 {
+		height = 420
+	}
 	open := true
 	ui.Modal(c, &open, func() {
-		ui.Column(c).Width(660).Padding(24).Gap(14).Children(func() {
-			ui.Text(c, "设置").FontSize(20).Bold()
-
-			// Leave room for the header and the footer even in a short
-			// window.
-			_, windowHeight := c.Size()
-			scrollHeight := windowHeight - 240
-			if scrollHeight < 220 {
-				scrollHeight = 220
-			}
-			if scrollHeight > 520 {
-				scrollHeight = 520
-			}
-			ui.Scroll(c).MaxHeight(scrollHeight).Scrollbars(false).Children(func() {
-				ui.Column(c).Gap(16).Children(func() {
-					ui.Column(c).Gap(6).Children(func() {
-						ui.Text(c, "文档目录").FontSize(13).Bold()
-						ui.Text(c, a.cfg.Workspace).FontSize(13).TextColor(t.TextMuted).Selectable()
-						ui.Row(c).Gap(8).Children(func() {
-							if ui.Button(c, "更改目录并迁移…").Clicked() {
-								a.settingsOpen = false
-								open = false
-								a.chooseWorkspace()
-							}
-							if ui.Button(c, "在 Finder 中打开").Clicked() {
-								mygo.Shell.OpenPath(a.vault.Root)
-							}
-						})
-						ui.Text(c, "迁移会把当前目录中的全部知识库、文档和回收站移动到新目录；新目录必须为空。").
-							FontSize(12).TextColor(t.TextMuted)
-					})
-
-					ui.Box(c).Height(1).Background(t.Border)
-
-					a.pageDisplaySettingsSection(c)
-
-					ui.Box(c).Height(1).Background(t.Border)
-
-					a.syncSettingsSection(c)
-
-					ui.Box(c).Height(1).Background(t.Border)
-
-					ui.Column(c).Gap(6).Children(func() {
-						ui.Text(c, "诊断日志").FontSize(13).Bold()
-						ui.Text(c, "日志只保存在这台电脑，用于排查应用和编辑器问题。").
-							FontSize(12).TextColor(t.TextMuted)
-						if a.diagnostics != nil {
-							ui.Text(c, a.diagnostics.Directory()).FontSize(12).TextColor(t.TextMuted).Selectable().SingleLine()
-						} else {
-							ui.Text(c, "日志目录不可用。").FontSize(12).TextColor(t.Danger)
-						}
-						ui.Text(c, "仅保留最近 3 天，供开发者排查问题。").FontSize(12).TextColor(t.TextMuted)
-						ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-							if ui.Button(c, "导出最近 3 天日志…").Clicked() {
-								a.logNote = ""
-								a.deferred = a.askExportDiagnosticLogs
-								a.update()
-							}
-							if a.logNote != "" {
-								color := t.TextMuted
-								if a.logNoteErr {
-									color = t.Danger
-								}
-								ui.Text(c, a.logNote).FontSize(12).TextColor(color)
-							}
-						})
-					})
-
-					ui.Box(c).Height(1).Background(t.Border)
-
-					kbs, docs := a.counts()
-					ui.Column(c).Gap(4).Children(func() {
-						ui.Text(c, "当前内容").FontSize(13).Bold()
-						ui.Textf(c, "%d 个知识库 · %d 篇文档 · Markdown 本地存储", kbs, docs).FontSize(13).TextColor(t.TextMuted)
-					})
-
-					ui.Box(c).Height(1).Background(t.Border)
-
-					ui.Column(c).Gap(4).Children(func() {
-						ui.Text(c, "关于").FontSize(13).Bold()
-						ui.Textf(c, "语燕 %s · 纯 Go 桌面应用（MyGo 原生界面）", appVersion()).
-							FontSize(13).TextColor(t.TextMuted)
-					})
-				})
+		ui.Row(c).Width(width).Height(height).Clip().Radius(8).Children(func() {
+			ui.Column(c).Width(180).FillHeight().Padding(10, 8).Gap(2).
+				Background(ui.Hex(sidebarBg)).BorderWidth(0, 1, 0, 0).BorderColor(t.Border).Children(func() {
+				ui.Text(c, "设置").FontSize(18).Bold().Padding(8, 10, 12, 10)
+				a.settingsNavItem(c, settingsWorkspace, iconFolder, "文档目录")
+				a.settingsNavItem(c, settingsDisplay, iconWidth, "文档显示")
+				a.settingsNavItem(c, settingsSync, iconCloud, "远端同步")
+				a.settingsNavItem(c, settingsLogs, iconFile, "诊断日志")
+				a.settingsNavItem(c, settingsAbout, iconInfo, "关于")
 			})
 
-			msg, isErr := a.syncNote.get()
-			if !isErr && a.syncJob != nil {
-				if st := a.syncJob.engine.Status(); st.LastErr != "" {
-					msg, isErr = "同步失败："+st.LastErr, true
-				}
-			}
-			if !a.cfg.Sync.Enabled {
-				msg = ""
-			}
-			if msg != "" {
-				color := t.TextMuted
-				if isErr {
-					color = t.Danger
-				}
-				ui.Text(c, msg).FontSize(12).TextColor(color)
-			}
+			ui.Column(c).Grow(1).FillHeight().Padding(22, 24, 16, 20).Gap(12).Children(func() {
+				ui.Text(c, settingsTitle(a.settingsSection)).FontSize(20).Bold()
+				ui.Text(c, settingsHint(a.settingsSection)).FontSize(12).TextColor(t.TextMuted)
+				ui.Scroll(c).Grow(1).Scrollbars(false).Children(func() {
+					switch a.settingsSection {
+					case settingsWorkspace:
+						a.workspaceSettingsSection(c)
+					case settingsDisplay:
+						a.pageDisplaySettingsSection(c)
+					case settingsSync:
+						a.syncSettingsSection(c)
+					case settingsLogs:
+						a.diagnosticsSettingsSection(c)
+					case settingsAbout:
+						a.aboutSettingsSection(c)
+					}
+				})
 
-			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				a.syncFooterButtons(c)
-				ui.Box(c).Grow(1)
-				if ui.PrimaryButton(c, "完成").Clicked() {
-					if err := a.applySyncSettings(); err != nil {
-						a.syncNote.set(err.Error(), true)
-						a.update()
-					} else {
-						a.settingsOpen = false
-						open = false
+				msg, isErr := a.syncNote.get()
+				if !isErr && a.syncJob != nil {
+					if st := a.syncJob.engine.Status(); st.LastErr != "" {
+						msg, isErr = "同步失败："+st.LastErr, true
 					}
 				}
+				if !a.cfg.Sync.Enabled {
+					msg = ""
+				}
+				if msg != "" {
+					color := t.TextMuted
+					if isErr {
+						color = t.Danger
+					}
+					ui.Text(c, msg).FontSize(12).TextColor(color)
+				}
+
+				ui.Box(c).Height(1).Background(t.Border)
+				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+					if a.settingsSection == settingsSync {
+						a.syncFooterButtons(c)
+					}
+					ui.Box(c).Grow(1)
+					if ui.PrimaryButton(c, "完成").Clicked() {
+						if err := a.applySyncSettings(); err != nil {
+							a.syncNote.set(err.Error(), true)
+							a.update()
+						} else {
+							a.settingsOpen = false
+							open = false
+						}
+					}
+				})
 			})
 		})
 	})
@@ -266,6 +241,118 @@ func (a *app) settingsModal(c *ui.Context) {
 		a.settingsOpen = false
 		a.showSyncSecret = false
 	}
+}
+
+// settingsNavItem is one row of the settings window's left menu.
+func (a *app) settingsNavItem(c *ui.Context, section string, icon *ui.SVG, label string) {
+	t := c.Theme()
+	selected := a.settingsSection == section
+	item := ui.Row(c).Height(34).Padding(7, 10).Gap(9).Radius(6).AlignItems(ui.Center).
+		OnClick(func() {
+			a.settingsSection = section
+			a.update()
+		})
+	switch {
+	case selected:
+		item.Background(t.Accent.Alpha(0.12))
+	case item.Hovered():
+		item.Background(ui.Hex(hoverBg))
+	}
+	item.Children(func() {
+		color := t.TextMuted
+		if selected {
+			color = t.Accent
+		}
+		ui.Icon(c, icon).FontSize(15).TextColor(color)
+		ui.Text(c, label).FontSize(13).TextColor(color)
+	})
+}
+
+func settingsTitle(section string) string {
+	switch section {
+	case settingsDisplay:
+		return "文档显示"
+	case settingsSync:
+		return "远端同步"
+	case settingsLogs:
+		return "诊断日志"
+	case settingsAbout:
+		return "关于"
+	default:
+		return "文档目录"
+	}
+}
+
+func settingsHint(section string) string {
+	switch section {
+	case settingsDisplay:
+		return "新文档默认使用的行距和字号。"
+	case settingsSync:
+		return "选择远端类型并填写连接信息。"
+	case settingsLogs:
+		return "只保存在这台电脑，用于排查应用和编辑器问题。"
+	case settingsAbout:
+		return "版本、运行环境和当前内容。"
+	default:
+		return "所有知识库的根文件夹，以及迁移和打开它的操作。"
+	}
+}
+
+// workspaceSettingsSection is the settings' 文档目录 page.
+func (a *app) workspaceSettingsSection(c *ui.Context) {
+	t := c.Theme()
+	ui.Column(c).Gap(12).Children(func() {
+		ui.Text(c, "当前目录").FontSize(13).Bold()
+		ui.Text(c, a.cfg.Workspace).FontSize(13).TextColor(t.TextMuted).Selectable()
+		ui.Row(c).Gap(8).Children(func() {
+			if ui.Button(c, "更改目录并迁移…").Clicked() {
+				a.settingsOpen = false
+				a.chooseWorkspace()
+			}
+			if ui.Button(c, "在 Finder 中打开").Clicked() {
+				mygo.Shell.OpenPath(a.vault.Root)
+			}
+		})
+		ui.Text(c, "迁移会把当前目录中的全部知识库、文档和回收站移动到新目录；新目录必须为空。").
+			FontSize(12).TextColor(t.TextMuted)
+	})
+}
+
+// diagnosticsSettingsSection is the settings' 诊断日志 page.
+func (a *app) diagnosticsSettingsSection(c *ui.Context) {
+	t := c.Theme()
+	ui.Column(c).Gap(8).Children(func() {
+		if a.diagnostics != nil {
+			ui.Text(c, a.diagnostics.Directory()).FontSize(12).TextColor(t.TextMuted).Selectable().SingleLine()
+		} else {
+			ui.Text(c, "日志目录不可用。").FontSize(12).TextColor(t.Danger)
+		}
+		ui.Text(c, "仅保留最近 3 天，供开发者排查问题。").FontSize(12).TextColor(t.TextMuted)
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			if ui.Button(c, "导出最近 3 天日志…").Clicked() {
+				a.logNote = ""
+				a.deferred = a.askExportDiagnosticLogs
+				a.update()
+			}
+			if a.logNote != "" {
+				color := t.TextMuted
+				if a.logNoteErr {
+					color = t.Danger
+				}
+				ui.Text(c, a.logNote).FontSize(12).TextColor(color)
+			}
+		})
+	})
+}
+
+// aboutSettingsSection is the settings' 关于 page.
+func (a *app) aboutSettingsSection(c *ui.Context) {
+	t := c.Theme()
+	kbs, docs := a.counts()
+	ui.Column(c).Gap(4).Children(func() {
+		ui.Textf(c, "语燕 %s · 纯 Go 桌面应用（MyGo 原生界面）", appVersion()).FontSize(13)
+		ui.Textf(c, "%d 个知识库 · %d 篇文档 · Markdown 本地存储", kbs, docs).FontSize(13).TextColor(t.TextMuted)
+	})
 }
 
 // pageDisplaySettingsSection sets the global page display defaults that
@@ -284,7 +371,6 @@ func (a *app) pageDisplaySettingsSection(c *ui.Context) {
 		}
 	}
 	ui.Column(c).Gap(6).Children(func() {
-		ui.Text(c, "文档显示").FontSize(13).Bold()
 		ui.Text(c, "新文档默认使用这里的行距和字号；单独设置过的文档会覆盖全局默认。").
 			FontSize(12).TextColor(t.TextMuted)
 

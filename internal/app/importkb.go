@@ -3,11 +3,13 @@ package app
 import (
 	"errors"
 	"io/fs"
+	"log"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 
@@ -65,11 +67,15 @@ func (a *app) askImportExternalKnowledgeBase() {
 	if !ok {
 		return
 	}
+	started := time.Now()
+	log.Printf("swift: import kb external: start src=%q", src)
 	name, err := a.vault.AddExternal(filepath.Base(filepath.Clean(src)), src)
 	if err != nil {
+		log.Printf("swift: import kb external: failed after %s: %v", formatElapsed(started), err)
 		a.setError(err)
 		return
 	}
+	log.Printf("swift: import kb external: done name=%q after %s", name, formatElapsed(started))
 	a.refreshTree()
 	if n := a.findNode(name); n != nil {
 		a.openKB(n)
@@ -80,17 +86,24 @@ func (a *app) askImportExternalKnowledgeBase() {
 // importKnowledgeBaseCopy copies a folder's Markdown hierarchy into a new
 // knowledge base, with the pictures and files its documents refer to.
 func (a *app) importKnowledgeBaseCopy(src string) (string, error) {
+	started := time.Now()
+	log.Printf("swift: import kb copy: start src=%q", src)
 	info, err := os.Stat(src)
 	if err != nil {
+		log.Printf("swift: import kb copy: failed after %s: %v", formatElapsed(started), err)
 		return "", err
 	}
 	if !info.IsDir() {
-		return "", errors.New("请选择一个文件夹")
-	}
-	kb, err := a.vault.CreateKnowledgeBase(filepath.Base(filepath.Clean(src)))
-	if err != nil {
+		err := errors.New("请选择一个文件夹")
+		log.Printf("swift: import kb copy: failed after %s: %v", formatElapsed(started), err)
 		return "", err
 	}
+	kb, err := a.createKnowledgeBase(filepath.Base(filepath.Clean(src)))
+	if err != nil {
+		log.Printf("swift: import kb copy: failed after %s: %v", formatElapsed(started), err)
+		return "", err
+	}
+	docs, assets := 0, 0
 	dirs := map[string]string{".": kb}
 	var ensureDir func(rel string) (string, error)
 	ensureDir = func(rel string) (string, error) {
@@ -139,15 +152,21 @@ func (a *app) importKnowledgeBaseCopy(src string) (string, error) {
 		if err != nil {
 			return err
 		}
-		md := a.rewriteImportedMarkdown(string(data), p, docRel)
+		md, copied := a.rewriteImportedMarkdown(string(data), p, docRel)
 		if _, err := a.vault.WriteDoc(docRel, md); err != nil {
 			return err
 		}
+		docs++
+		assets += copied
 		return nil
 	})
 	if err != nil {
+		log.Printf("swift: import kb copy: failed kb=%q after %s docs=%d assets=%d: %v",
+			kb, formatElapsed(started), docs, assets, err)
 		return kb, err
 	}
+	log.Printf("swift: import kb copy: done kb=%q docs=%d assets=%d after %s",
+		kb, docs, assets, formatElapsed(started))
 	return kb, nil
 }
 
@@ -158,8 +177,9 @@ func importMarkdown(name string) bool {
 
 // rewriteImportedMarkdown copies the local pictures and attached files a
 // document refers to into its assets, and points the document at them.
-func (a *app) rewriteImportedMarkdown(md, srcPath, docRel string) string {
+func (a *app) rewriteImportedMarkdown(md, srcPath, docRel string) (string, int) {
 	srcDir := filepath.Dir(srcPath)
+	copied := 0
 	copyRef := func(target string) (string, bool) {
 		ref := strings.TrimSpace(target)
 		if ref == "" || strings.Contains(ref, "://") || strings.HasPrefix(ref, "data:") || strings.HasPrefix(ref, "#") {
@@ -184,10 +204,11 @@ func (a *app) rewriteImportedMarkdown(md, srcPath, docRel string) string {
 		if err != nil {
 			return "", false
 		}
+		copied++
 		return moved, true
 	}
 	md = markdown.RewriteImageRefs(md, copyRef)
-	return markdown.RewriteLocalRefs(md, func(ref string, image bool) (string, bool) {
+	md = markdown.RewriteLocalRefs(md, func(ref string, image bool) (string, bool) {
 		if image {
 			return "", false
 		}
@@ -198,6 +219,7 @@ func (a *app) rewriteImportedMarkdown(md, srcPath, docRel string) string {
 		}
 		return copyRef(ref)
 	})
+	return md, copied
 }
 
 // askRemoveExternal forgets an external knowledge base from the list.
@@ -211,6 +233,9 @@ func (a *app) askRemoveExternal(name string) {
 			if err := a.vault.RemoveExternal(name); err != nil {
 				a.setError(err)
 				return
+			}
+			if err := a.forgetKBPin(name); err != nil {
+				a.setError(err)
 			}
 			if a.doc != nil && strings.Split(a.doc.Rel, "/")[0] == name {
 				a.doc = nil

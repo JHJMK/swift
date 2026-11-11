@@ -22,7 +22,7 @@
 
 | 功能 | 说明 | 教程 |
 | --- | --- | --- |
-| 知识库管理 | 新建、重命名、导出、删除知识库；引用外部文件夹作为可读写的外部知识库 | [知识库管理](docs/03-knowledge-bases.md) |
+| 知识库管理 | 全部知识库页、常用固定、新建/重命名/导出/删除；引用外部文件夹作为可读写的外部知识库 | [知识库管理](docs/03-knowledge-bases.md) |
 | 目录与文档树 | 目录/分组、拖放、复制粘贴、置顶、移出、子文档；最多 4 级 | [目录与文档树](docs/04-tree-and-documents.md) |
 | Markdown 写作 | 实时预览、标题、列表、任务、引用、代码块、表格、图片、附件、Mermaid | [编辑文档](docs/05-editing.md) / [Markdown 与内容块](docs/06-markdown-and-blocks.md) |
 | 小记 | 不属于任何知识库的速记，之后可保存到知识库 | [小记](docs/07-quick-note.md) |
@@ -33,6 +33,7 @@
 | 远端同步 | S3 / NFS / SMB 单向镜像；自动或手动；回收站删除后同步远端 | [远端同步](docs/12-remote-sync.md) |
 | 页面设置 | 全局默认行距和字号，每篇文档可单独覆盖；不改写 Markdown | [编辑文档](docs/05-editing.md) |
 | 诊断日志 | 本机日志、三天保留、导出 ZIP 排错 | [设置与数据](docs/13-settings-and-data.md) |
+| 后台运行 | 关闭窗口后驻留菜单栏/通知区域，后台继续同步；从托盘真正退出 | [设置与数据](docs/13-settings-and-data.md#11-关闭窗口后台运行与退出) |
 
 ### 界面预览
 
@@ -159,7 +160,7 @@ Windows 和 Linux 上把 `⌘` 换成 `Ctrl`。完整列表见[快捷键与技�
 ### 技术栈
 
 - **语言**：Go 1.27.3+，无 cgo。
-- **桌面框架**：[MyGo](https://github.com/egoist/mygo) 0.7.4，原生 UI + 系统 WebView。
+- **桌面框架**：[MyGo](https://github.com/egoist/mygo) 0.8.3，原生 UI + 系统 WebView。
 - **文档编辑器**：TypeScript + CodeMirror 6 + Vite，构建后嵌入 Go 二进制。
 - **图表**：Mermaid（Web 编辑器内置）。
 - **导入/导出**：Lakebook 归档解析、Markdown、DOCX、PDF。

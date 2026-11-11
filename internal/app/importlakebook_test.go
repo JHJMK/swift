@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -357,4 +358,42 @@ func firstImageRef(t *testing.T, md string) string {
 		t.Fatalf("markdown image target is unterminated: %q", md)
 	}
 	return md[start : start+end]
+}
+
+// Lakebook imports leave one line per key stage, so a slow import can be
+// narrowed down to parsing, image download or writing.
+func TestLakebookImportLogsStages(t *testing.T) {
+	oldWriter, oldFlags := log.Writer(), log.Flags()
+	var out bytes.Buffer
+	log.SetOutput(&out)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(oldWriter)
+		log.SetFlags(oldFlags)
+	})
+
+	path := writeAppLakebook(t, `
+- uuid: doc
+  title: 日志测试
+  type: DOC
+  doc_id: 1
+`, lakebookTestDoc{Slug: "doc", HTML: `<p>正文</p>`})
+
+	a, _, _ := newTestApp(t)
+	if _, err := a.importLakebook(path); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"lakebook import: start",
+		"lakebook import: parsed",
+		"lakebook import: images",
+		"lakebook import: prepared",
+		"lakebook import: write start",
+		"lakebook import: write done",
+		"lakebook import: finished",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("log lacks %q:\n%s", want, out.String())
+		}
+	}
 }

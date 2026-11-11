@@ -21,7 +21,6 @@ func (a *app) syncSettingsSection(c *ui.Context) {
 		}
 	}
 	ui.Column(c).Gap(8).Children(func() {
-		ui.Text(c, "远端同步").FontSize(13).Bold()
 		ui.Text(c, "把文档目录单向镜像到远端：本地改动会自动上传，从回收站彻底删除的文档也会从远端删除。外部引用的知识库不参与同步。").
 			FontSize(12).TextColor(t.TextMuted)
 

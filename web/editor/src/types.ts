@@ -10,6 +10,7 @@ export interface OpenPayload {
   readableLineWidth: boolean;
   outlineOpen: boolean;
   outlineWidth: number;
+  focusTitle?: boolean;
   savedAt: string;
   message?: string;
 }

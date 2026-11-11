@@ -223,10 +223,41 @@ func TestSettingsShowsDiagnosticLogs(t *testing.T) {
 	if err := tt.Click("设置"); err != nil {
 		t.Fatal(err)
 	}
+	if err := tt.Click("诊断日志"); err != nil {
+		t.Fatal(err)
+	}
 	tt.Frame()
 	for _, want := range []string{"诊断日志", "仅保留最近 3 天", "导出最近 3 天日志…"} {
 		if !tt.HasText(want) {
 			t.Fatalf("settings lack %q: %q", want, tt.Texts())
 		}
+	}
+}
+
+// Starting the app writes a first line, so the log directory has today's
+// file even when nothing else warns or fails.
+func TestStartDiagnosticsWritesStartupLine(t *testing.T) {
+	oldOverride := configDirOverride
+	configDirOverride = t.TempDir()
+	t.Cleanup(func() { configDirOverride = oldOverride })
+	oldWriter, oldFlags := log.Writer(), log.Flags()
+	t.Cleanup(func() {
+		log.SetOutput(oldWriter)
+		log.SetFlags(oldFlags)
+	})
+
+	date := time.Now().Format("2006-01-02")
+	logger := startDiagnostics()
+	if logger == nil {
+		t.Fatal("diagnostics did not start")
+	}
+	t.Cleanup(func() { _ = logger.Close() })
+
+	got, err := os.ReadFile(filepath.Join(configDirOverride, "logs", "swift-"+date+".log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "swift: start version=") {
+		t.Fatalf("startup line missing: %q", got)
 	}
 }

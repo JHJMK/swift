@@ -13,13 +13,7 @@ type dragItem struct {
 
 func (a *app) view(c *ui.Context) {
 	a.finishLakebookImport()
-	if a.mermaidRefresh && !a.isWebDoc() {
-		a.mermaidRefresh = false
-		a.reloadForMermaid()
-	}
-	if a.doc != nil && !a.isWebDoc() {
-		a.syncMermaidVisibility()
-	}
+	a.restartSyncIfPending()
 	a.applyTheme(c)
 	if result := a.syncNote.takeResult(); result != nil {
 		a.syncResult = result
@@ -130,6 +124,8 @@ func (a *app) mainView(c *ui.Context) {
 			switch {
 			case a.doc != nil:
 				a.editorView(c)
+			case a.allKBs && a.selected == "":
+				a.allKBsView(c)
 			case a.selected != "" && a.selectedIsDir:
 				a.folderView(c)
 			default:
@@ -160,6 +156,22 @@ func (a *app) goHome() {
 	a.flushTitle()
 	a.flushDoc()
 	a.doc = nil
+	a.allKBs = false
+	a.selected = ""
+	a.selectedIsDir = false
+	a.update()
+}
+
+// openAllKBs shows every knowledge base in the content area. The sidebar
+// keeps only the 常用 list, so this is the page for finding the others.
+func (a *app) openAllKBs() {
+	a.flushTitle()
+	a.flushDoc()
+	a.doc = nil
+	a.cardMenu = ""
+	a.rowMenu = ""
+	a.rowPlus = ""
+	a.allKBs = true
 	a.selected = ""
 	a.selectedIsDir = false
 	a.update()
@@ -170,6 +182,7 @@ func (a *app) goHome() {
 func (a *app) openKB(n *Node) {
 	a.flushTitle()
 	a.flushDoc()
+	a.allKBs = false
 	*a.openState(n.Rel) = true
 	if a.doc != nil && strings.HasPrefix(a.doc.Rel, n.Rel+"/") {
 		a.selected = a.doc.Rel
@@ -192,6 +205,7 @@ func (a *app) openKB(n *Node) {
 func (a *app) openKBHome(n *Node) {
 	a.flushTitle()
 	a.flushDoc()
+	a.allKBs = false
 	a.doc = nil
 	a.selected = n.Rel
 	a.selectedIsDir = true
@@ -260,7 +274,7 @@ func (a *app) globalSidebar(c *ui.Context) {
 		})
 
 		ui.Column(c).Padding(8, 10).Gap(2).Children(func() {
-			navRow(c, iconHome, "工作台", a.selected == "" && a.doc == nil, a.goHome)
+			navRow(c, iconHome, "工作台", a.selected == "" && a.doc == nil && !a.allKBs, a.goHome)
 			navRow(c, iconPencil, "小记", a.doc != nil && a.doc.Note, a.openNote)
 			navRow(c, iconTrash, "回收站", false, func() {
 				a.refreshTrash()
@@ -271,44 +285,63 @@ func (a *app) globalSidebar(c *ui.Context) {
 				a.settingsOpen = true
 				a.update()
 			})
+
+			ui.Box(c).Height(6)
+			// 知识库 is a destination like the rows above: it opens the
+			// page of every knowledge base. The plus beside it creates or
+			// imports one without leaving the current page.
+			tab := ui.Row(c).Height(32).Padding(5, 10).Gap(10).Radius(6).AlignItems(ui.Center).
+				Tooltip("查看全部知识库").OnClick(a.openAllKBs)
+			switch {
+			case a.allKBs:
+				tab.Background(ui.Hex(sidebarSel))
+			case tab.Hovered():
+				tab.Background(ui.Hex(hoverBg))
+			}
+			tab.Children(func() {
+				ui.Icon(c, iconBook).FontSize(16).TextColor(t.TextMuted)
+				ui.Text(c, "知识库").FontSize(14).TextColor(t.Text)
+				if len(a.tree) > 0 {
+					ui.Textf(c, "%d", len(a.tree)).FontSize(11).TextColor(t.TextMuted)
+				}
+				ui.Box(c).Grow(1)
+				add := ui.ButtonBase(c).Label("新建或导入知识库").Tooltip("新建或导入知识库").
+					Width(20).Height(20).Radius(5).Justify(ui.Center).AlignItems(ui.Center)
+				if a.kbAddMenuOpen || a.kbImportMenuOpen || add.Hovered() {
+					add.Background(ui.Hex(hoverBg))
+				}
+				add.Children(func() {
+					ui.Icon(c, iconPlus).FontSize(14).TextColor(t.TextMuted)
+				})
+				if add.Clicked() {
+					if a.kbAddMenuOpen || a.kbImportMenuOpen {
+						a.kbAddMenuOpen = false
+						a.kbImportMenuOpen = false
+					} else {
+						a.kbAddMenuOpen = true
+					}
+					a.update()
+				}
+				dropdownRight(c, add, &a.kbAddMenuOpen, func() {
+					menuItem(c, iconBook, "新建知识库", func() {
+						a.kbAddMenuOpen = false
+						a.askNewKnowledgeBase()
+						a.update()
+					})
+					menuSeparator(c)
+					menuItem(c, iconDownload, "导入", func() {
+						a.kbAddMenuOpen = false
+						a.kbImportMenuOpen = true
+						a.update()
+					})
+				})
+				dropdownRight(c, add, &a.kbImportMenuOpen, func() {
+					a.importMenuItems(c)
+				})
+			})
 		})
 
-		ui.Row(c).Padding(16, 10, 2, 14).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "知识库").FontSize(12).Bold().TextColor(t.TextMuted).Grow(1)
-			add := ui.ButtonBase(c).Label("新建或导入知识库").Tooltip("新建或导入知识库").
-				Width(22).Height(22).Radius(6).Justify(ui.Center).AlignItems(ui.Center)
-			if a.kbAddMenuOpen || a.kbImportMenuOpen || add.Hovered() {
-				add.Background(ui.Hex(hoverBg))
-			}
-			add.Children(func() {
-				ui.Icon(c, iconPlus).FontSize(15).TextColor(t.TextMuted)
-			})
-			if add.Clicked() {
-				if a.kbAddMenuOpen || a.kbImportMenuOpen {
-					a.kbAddMenuOpen = false
-					a.kbImportMenuOpen = false
-				} else {
-					a.kbAddMenuOpen = true
-				}
-				a.update()
-			}
-			dropdownRight(c, add, &a.kbAddMenuOpen, func() {
-				menuItem(c, iconBook, "新建知识库", func() {
-					a.kbAddMenuOpen = false
-					a.askNewKnowledgeBase()
-					a.update()
-				})
-				menuSeparator(c)
-				menuItem(c, iconDownload, "导入", func() {
-					a.kbAddMenuOpen = false
-					a.kbImportMenuOpen = true
-					a.update()
-				})
-			})
-			dropdownRight(c, add, &a.kbImportMenuOpen, func() {
-				a.importMenuItems(c)
-			})
-		})
+		ui.Box(c).Height(1).Margin(2, 10, 6, 10).Background(t.Border)
 
 		ui.Scroll(c).Grow(1).Children(func() {
 			ui.Column(c).Padding(0, 10).Gap(2).Children(func() {
@@ -324,7 +357,17 @@ func (a *app) globalSidebar(c *ui.Context) {
 					})
 					return
 				}
-				for _, n := range a.tree {
+				pinned := a.pinnedKBNodes()
+				if len(pinned) == 0 {
+					ui.Column(c).Padding(6, 10).Gap(6).Children(func() {
+						ui.Text(c, "还没有常用知识库").FontSize(12).TextColor(t.TextMuted)
+						if ui.Button(c, "浏览全部知识库").Clicked() {
+							a.openAllKBs()
+						}
+					})
+					return
+				}
+				for _, n := range pinned {
 					n := n
 					current := false
 					if kb := a.contextKB(); kb != nil && kb.Rel == n.Rel {
@@ -391,6 +434,13 @@ func (a *app) globalSidebar(c *ui.Context) {
 										}
 										a.update()
 									})
+									menuItem(c, iconPin, "取消常用", func() {
+										a.rowMenu = ""
+										if err := a.setKBPinned(n.Rel, false); err != nil {
+											a.setError(err)
+										}
+										a.update()
+									})
 									menuSeparator(c)
 									menuItemDanger(c, iconTrash, "移除外部知识库", func() {
 										a.rowMenu = ""
@@ -407,6 +457,13 @@ func (a *app) globalSidebar(c *ui.Context) {
 								menuItem(c, iconDownload, "导出", func() {
 									a.rowMenu = ""
 									a.exportKnowledgeBase(n)
+									a.update()
+								})
+								menuItem(c, iconPin, "取消常用", func() {
+									a.rowMenu = ""
+									if err := a.setKBPinned(n.Rel, false); err != nil {
+										a.setError(err)
+									}
 									a.update()
 								})
 								menuSeparator(c)

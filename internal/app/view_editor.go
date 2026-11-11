@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/richtext"
 )
@@ -24,9 +23,6 @@ func (a *app) editorView(c *ui.Context) {
 		}
 		if a.findOpen {
 			a.findBar(c)
-		}
-		if !doc.Note && hasMermaidBlocks(doc.Doc.Text()) && mermaidCLI() == "" {
-			a.mermaidHint(c)
 		}
 		empty := strings.TrimSpace(doc.Doc.Text().PlainText()) == ""
 		ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
@@ -60,12 +56,7 @@ func (a *app) editorView(c *ui.Context) {
 							}
 							return false
 						})
-						if a.focusTitle {
-							a.focusTitle = false
-							// The title, not the text, takes the keys now.
-							a.refocusEditor = false
-							title = title.Focus()
-						} else if untitledTitle(doc.Title) {
+						if untitledTitle(doc.Title) {
 							title = title.AutoFocus()
 							a.refocusEditor = false
 						}
@@ -110,31 +101,8 @@ func (a *app) editorView(c *ui.Context) {
 							Font:          ui.Font{Size: fontSize, LineHeight: lineHeight},
 							Theme:         theme,
 							ReadOnly:      a.findOpen || doc.ReadOnly || a.previewMode,
-							NoScrollbar:   true,
-							BottomPadding: 80,
 							OnLinkCommand: a.askLink,
 							OnLink:        a.openEditorLink,
-							OnCaret:       a.rememberCaret,
-							OnTop:         a.focusTitleFromBody,
-							OnCopyCode:    a.copyCodeBlock,
-							ContextMenu: func(m *ui.Menu) {
-								if m.Item("粘贴").Chosen() {
-									a.pending = func() { a.pasteFromMenu() }
-								}
-								if m.Item("粘贴并匹配样式").Chosen() {
-									a.pending = func() { a.pasteAndMatchStyle() }
-								}
-								if doc.Doc.Formatting().Paragraph.CodeBlock {
-									m.Separator()
-									if m.Item("删除整个代码块").Chosen() {
-										a.pending = func() {
-											doc.Doc.DeleteCodeBlock()
-											a.markDocDirty()
-											a.update()
-										}
-									}
-								}
-							},
 						}).FillWidth().FillHeight()
 
 						if a.focusBody {
@@ -152,11 +120,10 @@ func (a *app) editorView(c *ui.Context) {
 						}
 						if el.Changed() {
 							a.markDocDirty()
+							a.rememberNativeCaret(editBox, el, doc)
 							a.maybeSlashMenu()
 						}
 						a.setEditorFocused(el.Focused())
-						a.codeBlockHeaders(c, editBox, el, doc)
-						a.mermaidPreviewControls(c, editBox, el, doc)
 					})
 				})
 			})
@@ -180,16 +147,31 @@ func (a *app) webEditorView(c *ui.Context) {
 	})
 }
 
-// focusTitleFromBody moves the focus from the top of the body to the page
-// title, so Up and Down work across the two.
-func (a *app) focusTitleFromBody() {
-	a.focusTitle = true
-	a.update()
-}
-
-// rememberCaret keeps the caret's window position for the slash menu.
-func (a *app) rememberCaret(x, y float32) {
-	a.caretX, a.caretY = x, y
+// rememberNativeCaret estimates the caret's window position for the
+// slash menu. The rich text editor no longer reports it.
+func (a *app) rememberNativeCaret(_ ui.Element, editor ui.Element, doc *docState) {
+	if doc == nil || doc.Doc == nil {
+		return
+	}
+	boxes := doc.Doc.VisibleParagraphs()
+	if len(boxes) == 0 {
+		return
+	}
+	_, caret := doc.Doc.Selection()
+	target := boxes[0]
+	for _, box := range boxes {
+		if box.Start <= caret {
+			target = box
+		} else {
+			break
+		}
+	}
+	ed := editor.Bounds()
+	if ed.W <= 0 || ed.H <= 0 {
+		return
+	}
+	a.caretX = ed.X + 12
+	a.caretY = ed.Y + target.Top + max(target.Height, 18)
 }
 
 // bodyPlaceholder is the prompt of an empty page, hidden once the page
@@ -255,34 +237,5 @@ func (a *app) findBar(c *ui.Context) {
 		if ui.Button(c, "关闭").Padding(3, 8).Clicked() {
 			a.closeFind()
 		}
-	})
-}
-
-// mermaidHint tells how to install the renderer the Mermaid blocks need.
-func (a *app) mermaidHint(c *ui.Context) {
-	ui.Row(c).Padding(8, 20).Gap(8).AlignItems(ui.Center).
-		Background(ui.Hex("#fffaf0")).
-		BorderWidth(0, 0, 1, 0).BorderColor(ui.Hex("#f0e2c4")).Children(func() {
-		ui.Column(c).Gap(4).Grow(1).Children(func() {
-			ui.Text(c, "Mermaid 代码块暂以源码显示：未检测到 mermaid-cli。安装后重新打开文档即可预览。").
-				FontSize(12).TextColor(ui.Hex("#8a6d3b"))
-			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "npm i -g @mermaid-js/mermaid-cli").FontSize(12).Bold().TextColor(ui.Hex("#7a5a1f"))
-				if ui.Button(c, "复制命令").Padding(2, 8).Clicked() {
-					mygo.Clipboard.WriteText("npm i -g @mermaid-js/mermaid-cli")
-				}
-				if ui.Button(c, "重新检测").Padding(2, 8).Clicked() {
-					resetMermaidCLI()
-					if mermaidCLI() != "" && a.doc != nil && a.doc.Rel != "" {
-						rel := a.doc.Rel
-						a.flushTitle()
-						a.flushDoc()
-						a.doc = nil
-						a.openDoc(rel)
-					}
-					a.update()
-				}
-			})
-		})
 	})
 }

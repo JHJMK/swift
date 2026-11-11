@@ -2,6 +2,9 @@ let mermaidPromise: Promise<typeof import("mermaid").default> | null = null;
 let initialized = false;
 let sequence = 0;
 const cache = new Map<string, string>();
+// A long note can hold many diagrams; keep only the ones recently shown,
+// so their SVGs do not grow without bound.
+const cacheLimit = 128;
 
 async function loadMermaid(): Promise<typeof import("mermaid").default> {
   if (!mermaidPromise) {
@@ -32,12 +35,20 @@ async function loadMermaid(): Promise<typeof import("mermaid").default> {
 /** renderMermaidSvg renders a diagram once per source and returns its SVG. */
 export async function renderMermaidSvg(source: string): Promise<string | null> {
   const cached = cache.get(source);
-  if (cached) return cached;
+  if (cached) {
+    cache.delete(source);
+    cache.set(source, cached);
+    return cached;
+  }
   try {
     const mermaid = await loadMermaid();
     const id = `swift-mermaid-${++sequence}`;
     const { svg } = await mermaid.render(id, source);
     cache.set(source, svg);
+    if (cache.size > cacheLimit) {
+      const oldest = cache.keys().next().value;
+      if (oldest !== undefined) cache.delete(oldest);
+    }
     return svg;
   } catch (err) {
     console.warn("mermaid render failed", err);
@@ -46,5 +57,10 @@ export async function renderMermaidSvg(source: string): Promise<string | null> {
 }
 
 export function cachedMermaidSvg(source: string): string | undefined {
-  return cache.get(source);
+  const svg = cache.get(source);
+  if (svg) {
+    cache.delete(source);
+    cache.set(source, svg);
+  }
+  return svg;
 }

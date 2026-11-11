@@ -473,10 +473,10 @@ func (a *app) reloadDocFromDisk(doc *docState, md string, mtime time.Time) {
 			text = richtext.NewText("")
 		}
 		text = a.loadImages(text, doc.Rel)
-		text, previews := a.addMermaidPreviews(text, doc.Rel)
-		doc.Doc = richtext.NewDocument(text)
-		doc.Saved = text.Markdown()
-		doc.mermaidPreviews = previews
+		text, fences := a.annotateCodeFences(text, md)
+		doc.Doc = a.newNativeDocument(text)
+		doc.codeFences = fences
+		doc.Saved = nativeMarkdown(doc.Doc.Text(), fences)
 	}
 	a.flashToast("文档已从磁盘更新")
 	a.update()

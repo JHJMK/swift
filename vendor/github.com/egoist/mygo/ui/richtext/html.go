@@ -100,15 +100,11 @@ func writeBlocks(b *strings.Builder, paras []Paragraph) {
 			writeRuns(b, p.Runs)
 		case st.CodeBlock:
 			b.WriteString("<pre><code>")
-			blockID := st.CodeBlockID
-			same := func(k int) bool {
-				return paras[k].Style.CodeBlock && paras[k].Style.CodeBlockID == blockID
-			}
-			for ; i < len(paras) && same(i); i++ {
+			for ; i < len(paras) && paras[i].Style.CodeBlock; i++ {
 				for _, r := range paras[i].Runs {
 					b.WriteString(html.EscapeString(r.Text))
 				}
-				if i+1 < len(paras) && same(i+1) {
+				if i+1 < len(paras) && paras[i+1].Style.CodeBlock {
 					b.WriteByte('\n')
 				}
 			}
@@ -536,7 +532,7 @@ func (b *htmlBuilder) node(n *xhtml.Node, a Attributes) {
 		block = true
 	case atom.Pre:
 		b.flush()
-		b.style = ParagraphStyle{CodeBlock: true, Indent: saved.Indent, Quote: saved.Quote, CodeBlockID: newCodeBlockID()}
+		b.style = ParagraphStyle{CodeBlock: true, Indent: saved.Indent, Quote: saved.Quote}
 		b.pre++
 		defer func() { b.pre-- }()
 		block = true

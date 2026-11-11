@@ -36,14 +36,28 @@ func TestSignV4MatchesAWSS3Example(t *testing.T) {
 }
 
 type fakeS3 struct {
-	mu      sync.Mutex
-	objects map[string][]byte
-	paths   []string
-	status  int
+	mu       sync.Mutex
+	objects  map[string][]byte
+	paths    []string
+	status   int
+	failures int
+	attempts int
 }
 
 func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
+	f.mu.Lock()
+	f.attempts++
+	fail := f.failures
+	if fail > 0 {
+		f.failures--
+	}
+	f.mu.Unlock()
+	if fail > 0 {
+		w.WriteHeader(http.StatusBadGateway)
+		io.WriteString(w, "<html><body>502 Bad Gateway</body></html>")
+		return
+	}
 	if f.status != 0 {
 		w.WriteHeader(f.status)
 		io.WriteString(w, "<Error><Code>AccessDenied</Code><Message>denied</Message></Error>")
@@ -228,5 +242,51 @@ func TestS3ObjectURL(t *testing.T) {
 	}
 	if got, want := u.String(), "https://notes.s3.example.com/vault/a.md"; got != want {
 		t.Fatalf("virtual host URL is\n%s\nwant\n%s", got, want)
+	}
+}
+
+// A transient 502, as a CDN in front of the bucket returns, is tried
+// again; the same bytes and signature are sent each time.
+func TestS3RetriesTransientUpload(t *testing.T) {
+	fake := &fakeS3{failures: 2}
+	server := httptest.NewServer(fake)
+	defer server.Close()
+	store := newTestS3Store(t, server)
+	store.retryDelay = func(int) time.Duration { return 0 }
+	path := filepath.Join(t.TempDir(), "a.md")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutFile(context.Background(), "a.md", path); err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	attempts := fake.attempts
+	fake.mu.Unlock()
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts)
+	}
+}
+
+// A persistent 5xx stops after a short number of attempts and says so.
+func TestS3StopsRetryingPersistent5xx(t *testing.T) {
+	fake := &fakeS3{failures: 10}
+	server := httptest.NewServer(fake)
+	defer server.Close()
+	store := newTestS3Store(t, server)
+	store.retryDelay = func(int) time.Duration { return 0 }
+	path := filepath.Join(t.TempDir(), "a.md")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := store.PutFile(context.Background(), "a.md", path)
+	if err == nil || !strings.Contains(err.Error(), "502") || !strings.Contains(err.Error(), "已尝试") {
+		t.Fatalf("error is %v", err)
+	}
+	fake.mu.Lock()
+	attempts := fake.attempts
+	fake.mu.Unlock()
+	if attempts != s3Attempts {
+		t.Fatalf("attempts = %d, want %d", attempts, s3Attempts)
 	}
 }

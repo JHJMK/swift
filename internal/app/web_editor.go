@@ -39,6 +39,7 @@ type webEditorOpen struct {
 	ReadableLineWidth bool    `json:"readableLineWidth"`
 	OutlineOpen       bool    `json:"outlineOpen"`
 	OutlineWidth      float32 `json:"outlineWidth"`
+	FocusTitle        bool    `json:"focusTitle,omitempty"`
 	SavedAt           string  `json:"savedAt"`
 }
 
@@ -260,6 +261,7 @@ func (a *app) setupEditorWebView() {
 			a.editorWeb = false
 			if a.doc != nil {
 				a.doc.Web = false
+				a.ensureNativeDoc()
 			}
 			a.update()
 		})
@@ -286,15 +288,27 @@ func (a *app) sendWebOpen() {
 	if a.webView == nil || a.doc == nil {
 		return
 	}
+	payload := a.webOpenPayload()
+	a.webSentID = payload.ID
+	if err := webEditorOpenEvent.EmitPage(a.webView.Page(), payload); err != nil {
+		log.Printf("swift: editor open: %v", err)
+	}
+	a.sendWebSettings()
+}
+
+// webOpenPayload is what the page shows when a document opens. The title
+// is the draft, which is empty while a new document is untitled; such a
+// page puts the caret in its title field.
+func (a *app) webOpenPayload() webEditorOpen {
 	doc := a.doc
 	fontSize, lineHeight := a.pageFont(doc)
 	savedAt := ""
 	if !doc.Dirty && !doc.MTime.IsZero() {
 		savedAt = doc.MTime.Format("15:04:05")
 	}
-	payload := webEditorOpen{
+	return webEditorOpen{
 		ID:                a.docKey(),
-		Title:             doc.Title,
+		Title:             doc.TitleDraft,
 		Content:           doc.Markdown,
 		ReadOnly:          doc.ReadOnly,
 		PreviewMode:       a.previewMode,
@@ -304,13 +318,9 @@ func (a *app) sendWebOpen() {
 		ReadableLineWidth: a.narrowMode,
 		OutlineOpen:       a.outlineOpen,
 		OutlineWidth:      a.outlineWidth(),
+		FocusTitle:        untitledTitle(doc.Title) && doc.TitleDraft == "" && !doc.ReadOnly && !a.previewMode,
 		SavedAt:           savedAt,
 	}
-	a.webSentID = payload.ID
-	if err := webEditorOpenEvent.EmitPage(a.webView.Page(), payload); err != nil {
-		log.Printf("swift: editor open: %v", err)
-	}
-	a.sendWebSettings()
 }
 
 func (a *app) sendWebStatus(state, text string) {
@@ -584,4 +594,22 @@ func (a *app) webOpenWikiLink(url string) bool {
 		return true
 	}
 	return false
+}
+
+// ensureNativeDoc builds the rich text model a web document left out,
+// for the native editor that takes over when the page never becomes
+// ready.
+func (a *app) ensureNativeDoc() {
+	if a.doc == nil || a.doc.Doc != nil {
+		return
+	}
+	md := a.doc.Markdown
+	text := richtext.ParseMarkdown(md)
+	if strings.TrimSpace(md) == "" {
+		text = richtext.NewText("")
+	}
+	text = a.loadImages(text, a.doc.Rel)
+	text, fences := a.annotateCodeFences(text, md)
+	a.doc.Doc = a.newNativeDocument(text)
+	a.doc.codeFences = fences
 }

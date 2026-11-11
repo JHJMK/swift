@@ -82,11 +82,15 @@ func (a *app) kbRailFlyout(c *ui.Context, anchor ui.Element) {
 		panel.Width(220).Padding(8).Radius(10).Background(t.Surface).
 			Border(1, t.Border).Shadow(0, 8, 28, 0, ui.RGBA(0, 0, 0, 0.12))
 		ui.Column(c).FillWidth().Gap(1).Children(func() {
-			ui.Text(c, "知识库").FontSize(12).Bold().TextColor(t.TextMuted).Padding(4, 8)
+			ui.Text(c, "常用").FontSize(12).Bold().TextColor(t.TextMuted).Padding(4, 8)
 			if len(a.tree) == 0 {
 				ui.Text(c, "还没有知识库").FontSize(13).TextColor(t.TextMuted).Padding(6, 8)
 			}
-			for _, n := range a.tree {
+			pinned := a.pinnedKBNodes()
+			if len(a.tree) > 0 && len(pinned) == 0 {
+				ui.Text(c, "还没有常用知识库").FontSize(13).TextColor(t.TextMuted).Padding(6, 8)
+			}
+			for _, n := range pinned {
 				n := n
 				row := ui.Row(c).Padding(7, 9).Gap(8).Radius(6).AlignItems(ui.Center).
 					OnClick(func() {
@@ -103,6 +107,11 @@ func (a *app) kbRailFlyout(c *ui.Context, anchor ui.Element) {
 				})
 			}
 			menuSeparator(c)
+			menuItem(c, iconBook, "所有知识库", func() {
+				a.kbRailOpen = false
+				a.openAllKBs()
+				a.update()
+			})
 			menuItem(c, iconPlus, "新建知识库", func() {
 				a.kbRailOpen = false
 				a.askNewKnowledgeBase()
