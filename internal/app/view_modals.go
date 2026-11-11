@@ -292,7 +292,7 @@ func settingsHint(section string) string {
 	case settingsLogs:
 		return "只保存在这台电脑，用于排查应用和编辑器问题。"
 	case settingsAbout:
-		return "版本、运行环境和当前内容。"
+		return "版本与 GitHub 仓库。"
 	default:
 		return "所有知识库的根文件夹，以及迁移和打开它的操作。"
 	}
@@ -348,10 +348,18 @@ func (a *app) diagnosticsSettingsSection(c *ui.Context) {
 // aboutSettingsSection is the settings' 关于 page.
 func (a *app) aboutSettingsSection(c *ui.Context) {
 	t := c.Theme()
-	kbs, docs := a.counts()
-	ui.Column(c).Gap(4).Children(func() {
-		ui.Textf(c, "语燕 %s · 纯 Go 桌面应用（MyGo 原生界面）", appVersion()).FontSize(13)
-		ui.Textf(c, "%d 个知识库 · %d 篇文档 · Markdown 本地存储", kbs, docs).FontSize(13).TextColor(t.TextMuted)
+	const repository = "https://github.com/JHJMK/swift"
+	ui.Column(c).Gap(12).Children(func() {
+		ui.Row(c).Gap(16).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "版本").Width(56).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, appVersion()).FontSize(13)
+		})
+		ui.Row(c).Gap(16).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "GitHub").Width(56).FontSize(12).TextColor(t.TextMuted)
+			ui.Text(c, repository).FontSize(13).TextColor(t.Accent).Underline().
+				Cursor(ui.CursorPointer).Selectable().Role(ui.RoleLink).
+				OnClick(func() { mygo.Shell.OpenExternal(repository) })
+		})
 	})
 }
 
@@ -415,7 +423,7 @@ func (a *app) trashModal(c *ui.Context) {
 	open := true
 	ui.Modal(c, &open, func() {
 		ui.Column(c).Width(680).Padding(24).Gap(14).Children(func() {
-			ui.Row(c).AlignItems(ui.Center).Children(func() {
+			ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, "回收站").FontSize(20).Bold().Grow(1)
 				if len(a.trash) > 0 {
 					if ui.Button(c, "清空回收站").TextColor(t.Danger).Clicked() {

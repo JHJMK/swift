@@ -120,3 +120,23 @@ func TestAboutVersion(t *testing.T) {
 		t.Fatalf("versionFromFile = %q", got)
 	}
 }
+
+func TestAboutUIShowsVersionAndRepository(t *testing.T) {
+	old := mygo.App.Version()
+	t.Cleanup(func() { mygo.App.SetVersion(old) })
+	mygo.App.SetVersion("1.2.3")
+
+	a, _, _ := newTestApp(t)
+	a.settingsOpen = true
+	a.settingsSection = settingsAbout
+	tt := ui.NewTester(a.view, 1180, 760)
+
+	for _, text := range []string{"版本", "1.2.3", "GitHub", "https://github.com/JHJMK/swift"} {
+		if !tt.HasText(text) {
+			t.Fatalf("about page lacks %q: %q", text, tt.Texts())
+		}
+	}
+	if tt.HasText("运行环境") {
+		t.Fatalf("about page still shows the old runtime copy: %q", tt.Texts())
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"net/url"
 	"os"
 	"path"
@@ -20,12 +21,13 @@ import (
 )
 
 const (
-	metaDirName       = ".swift"
-	noteAssetsDirName = "note-assets"
-	externalFileName  = "external.json"
-	orderFileName     = "order.json"
-	recentFileName    = "recent.json"
-	trashDirName      = "trash"
+	metaDirName        = ".swift"
+	noteAssetsDirName  = "note-assets"
+	externalFileName   = "external.json"
+	navigationFileName = "navigation.json"
+	orderFileName      = "order.json"
+	recentFileName     = "recent.json"
+	trashDirName       = "trash"
 )
 
 // Node is a knowledge base, folder or document in the vault.
@@ -79,6 +81,13 @@ type RecentEntry struct {
 	OpenedAt time.Time `json:"openedAt"`
 }
 
+// NavigationEntry is the document a knowledge base last showed, and how
+// far down that document was scrolled.
+type NavigationEntry struct {
+	Doc       string  `json:"doc"`
+	ScrollTop float64 `json:"scrollTop,omitempty"`
+}
+
 // Vault is a workspace folder. Knowledge bases are its top-level folders,
 // folders are nested folders and documents are ".md" files.
 type Vault struct {
@@ -87,6 +96,9 @@ type Vault struct {
 	// External maps a knowledge base's name to a folder outside the vault
 	// that it reads where it is.
 	External map[string]string
+	// Navigation remembers the last document and position of each
+	// knowledge base.
+	Navigation map[string]NavigationEntry
 }
 
 // OpenVault opens root as a vault, creating it and its metadata folder if
@@ -102,9 +114,15 @@ func OpenVault(root string) (*Vault, error) {
 	if err := os.MkdirAll(filepath.Join(abs, metaDirName), 0o755); err != nil {
 		return nil, err
 	}
-	v := &Vault{Root: abs, Order: map[string][]string{}, External: map[string]string{}}
+	v := &Vault{
+		Root:       abs,
+		Order:      map[string][]string{},
+		External:   map[string]string{},
+		Navigation: map[string]NavigationEntry{},
+	}
 	v.loadOrder()
 	v.loadExternal()
+	v.loadNavigation()
 	return v, nil
 }
 
@@ -1136,6 +1154,55 @@ func (v *Vault) readRecent() []RecentEntry {
 	var list []RecentEntry
 	_ = json.Unmarshal(b, &list)
 	return list
+}
+
+// NavigationFor returns the last document and position of a knowledge
+// base, if it has a record.
+func (v *Vault) NavigationFor(kb string) NavigationEntry {
+	return v.Navigation[kb]
+}
+
+// SetNavigation records the document and position of a knowledge base in
+// memory. SaveNavigation writes the records to disk.
+func (v *Vault) SetNavigation(kb, doc string, scrollTop float64) {
+	if kb == "" || doc == "" {
+		return
+	}
+	if scrollTop < 0 || math.IsNaN(scrollTop) || math.IsInf(scrollTop, 0) {
+		scrollTop = 0
+	}
+	if v.Navigation == nil {
+		v.Navigation = map[string]NavigationEntry{}
+	}
+	v.Navigation[kb] = NavigationEntry{Doc: doc, ScrollTop: scrollTop}
+}
+
+// SaveNavigation writes the last documents and positions to disk.
+func (v *Vault) SaveNavigation() error {
+	b, err := json.MarshalIndent(v.Navigation, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(filepath.Join(v.Root, metaDirName, navigationFileName), b)
+}
+
+func (v *Vault) loadNavigation() {
+	b, err := os.ReadFile(filepath.Join(v.Root, metaDirName, navigationFileName))
+	if err != nil {
+		return
+	}
+	var entries map[string]NavigationEntry
+	if json.Unmarshal(b, &entries) != nil {
+		return
+	}
+	for kb, entry := range entries {
+		if kb != "" && entry.Doc != "" {
+			if entry.ScrollTop < 0 || math.IsNaN(entry.ScrollTop) || math.IsInf(entry.ScrollTop, 0) {
+				entry.ScrollTop = 0
+			}
+			v.Navigation[kb] = entry
+		}
+	}
 }
 
 func (v *Vault) abs(rel string) (string, error) {

@@ -23,12 +23,13 @@ import (
 
 // docState is the document open in the editor.
 type docState struct {
-	Rel   string
-	Title string
-	Doc   *richtext.Document
-	Saved string
-	Dirty bool
-	MTime time.Time
+	Rel       string
+	Title     string
+	Doc       *richtext.Document
+	Saved     string
+	Dirty     bool
+	MTime     time.Time
+	ScrollTop float64
 
 	// Markdown is the text the web editor holds, the authoritative text
 	// while Web is set. The native rich text model is parsed from it only
@@ -137,6 +138,9 @@ type app struct {
 	doc         *docState
 	previewMode bool
 	saveAt      time.Time
+	// dashboardCache holds the workbench statistics until the tree, a
+	// document, or the calendar day changes.
+	dashboardCache *dashboardData
 
 	prompt  *promptState
 	confirm *confirmState
@@ -257,6 +261,7 @@ func (a *app) refreshTree() {
 	if a.vault == nil {
 		return
 	}
+	a.dashboardCache = nil
 	if a.openDirs == nil {
 		a.openDirs = map[string]*bool{}
 	}
@@ -345,6 +350,11 @@ func (a *app) openDoc(rel string) {
 		a.setError(err)
 		return
 	}
+	kb := topRel(rel)
+	scrollTop := 0.0
+	if nav := a.vault.NavigationFor(kb); nav.Doc == rel {
+		scrollTop = nav.ScrollTop
+	}
 	web := a.editorWeb && a.webView != nil
 	saved := md
 	var fences map[string]codeFenceInfo
@@ -367,6 +377,7 @@ func (a *app) openDoc(rel string) {
 		Markdown:   md,
 		Web:        web,
 		MTime:      mtime,
+		ScrollTop:  scrollTop,
 		codeFences: fences,
 	}
 	a.previewMode = false
@@ -384,12 +395,48 @@ func (a *app) openDoc(rel string) {
 		*a.openState(parent) = true
 	}
 	a.vault.TouchRecent(rel)
+	a.vault.SetNavigation(kb, rel, scrollTop)
+	a.saveNavigation()
 	if web {
 		a.refocusEditor = false
 		a.sendWebOpen()
 	} else {
 		a.refocusEditor = true
 	}
+}
+
+func topRel(rel string) string {
+	top, _, _ := strings.Cut(rel, "/")
+	return top
+}
+
+func (a *app) saveNavigation() {
+	if a.vault == nil {
+		return
+	}
+	if err := a.vault.SaveNavigation(); err != nil {
+		a.setError(err)
+	}
+}
+
+// moveNavigation follows a renamed or moved document, folder, or
+// knowledge base.
+func (a *app) moveNavigation(oldRel, newRel string) {
+	if a.vault == nil || oldRel == "" || oldRel == newRel {
+		return
+	}
+	next := make(map[string]NavigationEntry, len(a.vault.Navigation))
+	for kb, entry := range a.vault.Navigation {
+		if relWithin(entry.Doc, oldRel) {
+			entry.Doc = newRel + strings.TrimPrefix(entry.Doc, oldRel)
+			kb = topRel(entry.Doc)
+		} else if relWithin(kb, oldRel) {
+			kb = newRel + strings.TrimPrefix(kb, oldRel)
+		}
+		next[kb] = entry
+	}
+	a.vault.Navigation = next
+	a.saveNavigation()
 }
 
 // rememberWrite records a text this app wrote, keeping only the recent
@@ -495,6 +542,7 @@ func (a *app) flushDoc() {
 	doc.Dirty = false
 	doc.externalConflict = false
 	doc.externalDeleted = false
+	a.dashboardCache = nil
 	if doc.Web {
 		a.sendWebStatus("saved", "已保存")
 	}
@@ -1014,6 +1062,7 @@ func (a *app) renameOpenDoc(title string) error {
 	if err != nil {
 		return err
 	}
+	a.moveNavigation(oldRel, newRel)
 	a.doc.Rel = newRel
 	a.doc.Title = titleOf(newRel)
 	a.doc.TitleDraft = a.doc.Title
@@ -1077,6 +1126,7 @@ func (a *app) renameNode(rel, value string) error {
 	if err != nil {
 		return err
 	}
+	a.moveNavigation(rel, newRel)
 	if !strings.Contains(rel, "/") && rel != newRel {
 		if err := a.renameKBPin(rel, newRel); err != nil {
 			a.setError(err)
@@ -1359,6 +1409,7 @@ func (a *app) moveNode(rel, newParentRel, beforeName string) {
 		a.setError(err)
 		return
 	}
+	a.moveNavigation(rel, newRel)
 	if a.doc != nil && (a.doc.Rel == rel || strings.HasPrefix(a.doc.Rel, rel+"/")) {
 		a.doc.Rel = newRel + strings.TrimPrefix(a.doc.Rel, rel)
 	}

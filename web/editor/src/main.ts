@@ -118,6 +118,8 @@ let previousTitle = "";
 let saveStateTimer = 0;
 let countTimer = 0;
 let outlineTimer = 0;
+let scrollTimer = 0;
+let scrollRestoreRaf = 0;
 let toastTimer = 0;
 let outlineWidth = 240;
 let outlineResizePointer: number | null = null;
@@ -720,6 +722,32 @@ function syncChanged() {
     });
 }
 
+function flushScrollPosition() {
+  window.clearTimeout(scrollTimer);
+  scrollTimer = 0;
+  if (!current || !docId || docId === "note" || loading) return;
+  void bridge
+    .call<void>(`${SERVICE}.Scroll`, docId, Math.max(0, els.scroller.scrollTop))
+    .catch((err) => console.warn("scroll failed", err));
+}
+
+function queueScrollPosition() {
+  if (!current || !docId || docId === "note" || loading) return;
+  window.clearTimeout(scrollTimer);
+  scrollTimer = window.setTimeout(flushScrollPosition, 220);
+}
+
+function restoreDocumentScroll(scrollTop: number) {
+  const top = Number.isFinite(scrollTop) && scrollTop > 0 ? scrollTop : 0;
+  window.cancelAnimationFrame(scrollRestoreRaf);
+  els.scroller.scrollTop = top;
+  // CodeMirror finishes its first layout on the next frame.
+  scrollRestoreRaf = window.requestAnimationFrame(() => {
+    scrollRestoreRaf = 0;
+    els.scroller.scrollTop = top;
+  });
+}
+
 function queueCount() {
   window.clearTimeout(countTimer);
   countTimer = window.setTimeout(updateCount, 120);
@@ -831,6 +859,7 @@ function applyOutlineWidth(width: number) {
 }
 
 function openDocument(payload: OpenPayload) {
+  if (current && payload.id !== docId) flushScrollPosition();
   loading = true;
   closeSlash();
   closeBlockMenu();
@@ -874,7 +903,7 @@ function openDocument(payload: OpenPayload) {
     view.focus();
     void bridge.call<void>(`${SERVICE}.SetFocused`, !isReadOnly()).catch(() => undefined);
   }
-  els.scroller.scrollTop = 0;
+  restoreDocumentScroll(payload.scrollTop);
   updateCount();
   renderOutline();
   refreshToolbar();
@@ -1905,7 +1934,14 @@ document.addEventListener(
   true,
 );
 
-els.scroller.addEventListener("scroll", closeBlockMenu, { passive: true });
+els.scroller.addEventListener(
+  "scroll",
+  () => {
+    closeBlockMenu();
+    queueScrollPosition();
+  },
+  { passive: true },
+);
 
 view.dom.addEventListener("keydown", (event) => {
   if (!slashOpen || event.isComposing) return;
@@ -2026,6 +2062,9 @@ bridge.on(EVENT_RELOAD, (payload) => {
   reloadDocument(payload as ReloadPayload);
 });
 
+window.addEventListener("pagehide", flushScrollPosition);
+window.addEventListener("beforeunload", flushScrollPosition);
+
 function timeNow(): string {
   return new Date().toLocaleTimeString("zh-CN", { hour12: false });
 }
@@ -2106,6 +2145,7 @@ flowchart LR
       outlineOpen: false,
       outlineWidth: 240,
       savedAt: "",
+      scrollTop: 0,
     } satisfies OpenPayload);
   }, 0);
   return {

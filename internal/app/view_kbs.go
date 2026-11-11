@@ -13,8 +13,8 @@ func (a *app) allKBsView(c *ui.Context) {
 	ui.Column(c).Fill().Children(func() {
 		ui.Box(c).Absolute().Left(0).Top(0).Right(0).Height(c.TitleBar().Height).DragWindow()
 		ui.Scroll(c).Grow(1).Children(func() {
-			ui.Column(c).Padding(40, 44).Gap(22).MaxWidth(1040).Children(func() {
-				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+			ui.Column(c).FillWidth().Padding(40, 44).Gap(22).Children(func() {
+				ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
 					ui.Column(c).Gap(4).Grow(1).Children(func() {
 						ui.Text(c, "知识库").FontSize(28).Bold()
 						ui.Textf(c, "%d 个知识库 · %d 篇文档", kbs, docs).FontSize(14).TextColor(t.TextMuted)
@@ -36,20 +36,24 @@ func (a *app) allKBsView(c *ui.Context) {
 				ui.Text(c, "点击知识库打开；固定到常用后会显示在左侧栏。").
 					FontSize(13).TextColor(t.TextMuted)
 
-				if len(a.tree) == 0 {
-					ui.Column(c).Padding(30).Gap(6).Radius(10).Background(t.Surface).
-						Border(1, t.Border).Children(func() {
-						ui.Text(c, "还没有知识库").FontSize(15).Bold()
-						ui.Text(c, "新建一个知识库，或从文件夹、Lakebook 导入。").
-							FontSize(13).TextColor(t.TextMuted)
-					})
-					return
-				}
+				ui.Row(c).FillWidth().MinWidth(0).Justify(ui.Center).Children(func() {
+					ui.Column(c).WidthPercent(100).MinWidth(0).MaxWidth(1040).Children(func() {
+						if len(a.tree) == 0 {
+							ui.Column(c).Padding(30).Gap(6).Radius(10).Background(t.Surface).
+								Border(1, t.Border).Children(func() {
+								ui.Text(c, "还没有知识库").FontSize(15).Bold()
+								ui.Text(c, "新建一个知识库，或从文件夹、Lakebook 导入。").
+									FontSize(13).TextColor(t.TextMuted)
+							})
+							return
+						}
 
-				ui.Row(c).Wrap().Gap(12).Children(func() {
-					for _, n := range a.tree {
-						a.kbCard(c, n)
-					}
+						ui.Row(c).FillWidth().Wrap().Gap(12).Children(func() {
+							for _, n := range a.tree {
+								a.kbCard(c, n)
+							}
+						})
+					})
 				})
 			})
 		})

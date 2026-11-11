@@ -354,6 +354,7 @@ func (a *app) applyKBEvents(w *kbWatch, events []mygo.FileEvent) {
 	}
 
 	if touched {
+		a.dashboardCache = nil
 		if target := a.doc; target != nil {
 			if md, mtime, err := a.vault.ReadDoc(target.Rel); err == nil {
 				a.reloadIfChanged(target, md, mtime)
@@ -369,6 +370,7 @@ func (a *app) applyKBEvents(w *kbWatch, events []mygo.FileEvent) {
 // adoptExternalMove keeps the open document open when another program
 // moves it or a folder above it.
 func (a *app) adoptExternalMove(doc *docState, newRel, oldRel string, isDir bool) {
+	a.moveNavigation(oldRel, newRel)
 	doc.Rel = newRel
 	doc.Title = titleOf(newRel)
 	doc.TitleDraft = doc.Title
