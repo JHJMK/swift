@@ -25,7 +25,7 @@
 | 知识库管理 | 全部知识库页、常用固定、新建/重命名/导出/删除；引用外部文件夹作为可读写的外部知识库 | [知识库管理](docs/03-knowledge-bases.md) |
 | 阅读记忆 | 每个知识库分别记住上次打开的文档和滚动位置，再次进入时恢复 | [知识库管理](docs/03-knowledge-bases.md#3-打开知识库) |
 | 目录与文档树 | 目录/分组、拖放、复制粘贴、置顶、移出、子文档；最多 4 级 | [目录与文档树](docs/04-tree-and-documents.md) |
-| Markdown 写作 | 实时预览、标题、列表、任务、引用、代码块、表格、图片、附件、Mermaid | [编辑文档](docs/05-editing.md) / [Markdown 与内容块](docs/06-markdown-and-blocks.md) |
+| Markdown 写作 | 实时预览、标题、列表、任务、引用、代码块、表格、图片、附件、Mermaid；代码围栏成对删除，预览模式禁止剪切修改 | [编辑文档](docs/05-editing.md) / [Markdown 与内容块](docs/06-markdown-and-blocks.md) |
 | 小记 | 不属于任何知识库的速记，之后可保存到知识库 | [小记](docs/07-quick-note.md) |
 | 全局搜索 | 在标题和正文中搜索，可限定全部知识库、某个知识库或当前资源 | [搜索](docs/08-search.md) |
 | 回收站 | 还原、彻底删除、清空；清理不再被引用的图片和附件 | [回收站](docs/09-trash.md) |

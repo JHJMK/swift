@@ -104,6 +104,92 @@ export function parseFences(lines: string[]): Fence[] {
   return out;
 }
 
+export interface TextRange {
+  from: number;
+  to: number;
+}
+
+/** codeFenceDeletionRanges expands a deletion that would split a closed
+ * fenced block, so both fence lines go together. Keeping one side would
+ * make Markdown treat all following text as code. */
+export function codeFenceDeletionRanges(
+  text: string,
+  from: number,
+  to: number,
+  forward: boolean,
+): TextRange[] | null {
+  const length = text.length;
+  from = Math.max(0, Math.min(from, length));
+  to = Math.max(from, Math.min(to, length));
+  let deleteFrom = from;
+  let deleteTo = to;
+  if (from === to) {
+    if (forward) deleteTo = Math.min(length, to + 1);
+    else deleteFrom = Math.max(0, from - 1);
+  }
+  if (deleteFrom === deleteTo) return null;
+
+  const touchedText = text.slice(deleteFrom, deleteTo);
+  if (!touchedText.includes("`") && !touchedText.includes("~")) return null;
+
+  const lines = text.split("\n");
+  const lineStarts: number[] = [];
+  let offset = 0;
+  for (const line of lines) {
+    lineStarts.push(offset);
+    offset += line.length + 1;
+  }
+  const overlaps = (a: TextRange, b: TextRange) =>
+    a.from < b.to && a.to > b.from;
+  const contains = (outer: TextRange, inner: TextRange) =>
+    outer.from <= inner.from && outer.to >= inner.to;
+  const deletion = { from: deleteFrom, to: deleteTo };
+
+  let ranges: TextRange[] | null = null;
+  for (const fence of parseFences(lines)) {
+    if (fence.closeLine === -1) continue;
+    const openMatch = FENCE_RE.exec(lines[fence.openLine]);
+    const closeMatch = FENCE_RE.exec(lines[fence.closeLine]);
+    if (!openMatch || !closeMatch) continue;
+    const open = {
+      from: lineStarts[fence.openLine] + openMatch[1].length,
+      to: lineStarts[fence.openLine] + openMatch[1].length + openMatch[2].length,
+    };
+    const close = {
+      from: lineStarts[fence.closeLine] + closeMatch[1].length,
+      to: lineStarts[fence.closeLine] + closeMatch[1].length + closeMatch[2].length,
+    };
+    if (!overlaps(deletion, open) && !overlaps(deletion, close)) continue;
+    if (contains(deletion, open) && contains(deletion, close)) continue;
+
+    ranges ??= [];
+    ranges.push(
+      {
+        from: lineStarts[fence.openLine],
+        to: lineStarts[fence.openLine] + lines[fence.openLine].length,
+      },
+      {
+        from: lineStarts[fence.closeLine],
+        to: lineStarts[fence.closeLine] + lines[fence.closeLine].length,
+      },
+      deletion,
+    );
+  }
+  if (!ranges) return null;
+
+  ranges.sort((a, b) => a.from - b.from || a.to - b.to);
+  const merged: TextRange[] = [];
+  for (const range of ranges) {
+    const previous = merged[merged.length - 1];
+    if (previous && range.from <= previous.to) {
+      previous.to = Math.max(previous.to, range.to);
+    } else {
+      merged.push({ ...range });
+    }
+  }
+  return merged;
+}
+
 /** fenceAt returns the fence holding line, if any. */
 export function fenceAt(fences: Fence[], line: number): Fence | undefined {
   for (const f of fences) {
