@@ -292,7 +292,7 @@ func settingsTitle(section string) string {
 func settingsHint(section string) string {
 	switch section {
 	case settingsDisplay:
-		return "新文档默认使用的行距和字号。"
+		return "打开文档的模式，以及默认的行距和字号。"
 	case settingsSync:
 		return "选择远端类型并填写连接信息；凭据只保存在本机。"
 	case settingsLogs:
@@ -385,8 +385,22 @@ func (a *app) pageDisplaySettingsSection(c *ui.Context) {
 		}
 	}
 	ui.Column(c).Gap(6).Children(func() {
-		ui.Text(c, "新文档默认使用这里的行距和字号；单独设置过的文档会覆盖全局默认。").
+		ui.Text(c, "单独设置过行距或字号的文档会覆盖全局默认。").
 			FontSize(12).TextColor(t.TextMuted)
+
+		ui.Text(c, "打开文档时").FontSize(12).TextColor(t.TextMuted)
+		ui.Row(c).Gap(6).Children(func() {
+			choice("编辑模式", !a.opensInPreview(), func() {
+				if err := a.saveOpenInPreview(false); err != nil {
+					a.setError(err)
+				}
+			})
+			choice("阅读模式", a.opensInPreview(), func() {
+				if err := a.saveOpenInPreview(true); err != nil {
+					a.setError(err)
+				}
+			})
+		})
 
 		ui.Text(c, "行间距").FontSize(12).TextColor(t.TextMuted)
 		ui.Row(c).Gap(6).Children(func() {

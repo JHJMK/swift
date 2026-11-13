@@ -19,6 +19,9 @@ type Config struct {
 	// DefaultPageSettings are the page display settings new documents
 	// start with, unless a document has settings of its own.
 	DefaultPageSettings PageSettings `json:"defaultPageSettings,omitzero"`
+	// OpenInPreview shows a document as a reader when it opens, without
+	// the editor, as the preview button does.
+	OpenInPreview bool `json:"openInPreview,omitempty"`
 	// PageSettings are the display settings of documents that override
 	// the defaults, by rel.
 	PageSettings map[string]PageSettings `json:"pageSettings,omitempty"`

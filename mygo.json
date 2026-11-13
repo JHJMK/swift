@@ -2,7 +2,7 @@
   "name": "语燕",
   "slug": "swift",
   "identifier": "com.jjk.swift",
-  "version": "0.2.5",
+  "version": "0.3.0",
   "icon": "internal/app/icon/swift.png",
   "out": "build"
 }

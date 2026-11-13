@@ -344,6 +344,15 @@ func (a *app) saveDefaultPageSettings(s PageSettings) error {
 	return nil
 }
 
+// saveOpenInPreview stores whether documents open as a reader.
+func (a *app) saveOpenInPreview(read bool) error {
+	if a.cfg == nil || a.cfg.OpenInPreview == read {
+		return nil
+	}
+	a.cfg.OpenInPreview = read
+	return saveConfig(a.cfg)
+}
+
 // editorToolbar is the compact icon toolbar above the page.
 func (a *app) editorToolbar(c *ui.Context, doc *docState) {
 	t := c.Theme()

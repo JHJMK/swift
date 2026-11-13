@@ -23,6 +23,7 @@ func (a *app) view(c *ui.Context) {
 		a.deferred = nil
 		fn()
 	}
+	a.syncPasteItem()
 	if a.vault == nil {
 		a.onboarding(c)
 	} else {

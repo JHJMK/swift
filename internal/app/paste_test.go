@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/egoist/mygo"
 )
 
 func TestPasteImageAddsAsset(t *testing.T) {
@@ -49,5 +51,45 @@ func TestPasteImageAddsAsset(t *testing.T) {
 	asset := filepath.Join(root, filepath.Dir(rel), filepath.FromSlash(url))
 	if _, err := os.Stat(asset); err != nil {
 		t.Fatalf("asset not written: %v", err)
+	}
+}
+
+// A modal may hold a text field while the editor keeps the focus behind
+// it, as the web editor does: Cmd+V must reach the field, so the Paste
+// menu item is off while a modal is up.
+func TestPasteMenuOffWhileModalOpen(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	a.pasteItem = &mygo.MenuItem{Label: "粘贴", Disabled: true}
+	a.doc = &docState{Rel: rel}
+	a.editorFocused = true
+	a.syncPasteItem()
+	if !a.pasteItem.IsEnabled() {
+		t.Fatal("paste not enabled for a focused editor")
+	}
+
+	a.settingsOpen = true
+	a.syncPasteItem()
+	if a.pasteItem.IsEnabled() {
+		t.Fatal("paste enabled while the settings modal is open")
+	}
+
+	a.settingsOpen = false
+	a.syncPasteItem()
+	if !a.pasteItem.IsEnabled() {
+		t.Fatal("paste not enabled again after closing the settings")
+	}
+
+	// The same holds for the other inputs over the page.
+	a.findOpen = true
+	a.syncPasteItem()
+	if a.pasteItem.IsEnabled() {
+		t.Fatal("paste enabled while the find bar is open")
+	}
+	a.findOpen = false
+
+	a.previewMode = true
+	a.syncPasteItem()
+	if a.pasteItem.IsEnabled() {
+		t.Fatal("paste enabled in preview mode")
 	}
 }

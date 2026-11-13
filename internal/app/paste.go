@@ -14,7 +14,9 @@ import (
 // item is enabled only while the editor has the focus, so text fields keep
 // the usual Cmd+V.
 func (a *app) pasteFromMenu() {
-	if a.doc == nil || a.doc.ReadOnly || a.previewMode {
+	// The item is off in either case, but a press may reach it in the
+	// frame a modal opens: never paste behind the field being typed in.
+	if !a.pasteIntoEditor() {
 		return
 	}
 	if a.isWebDoc() {
@@ -146,15 +148,42 @@ func selection(doc *richtext.Document) (int, int) {
 	return start, end
 }
 
-// setEditorFocused keeps the Paste menu item in step with the editor: a
-// disabled item leaves Cmd+V to the focus, as a text field needs.
+// setEditorFocused remembers whether the document's text has the focus,
+// and keeps the Paste menu item in step with it.
 func (a *app) setEditorFocused(focused bool) {
-	if a.editorFocused == focused {
+	a.editorFocused = focused
+	a.syncPasteItem()
+}
+
+// pasteIntoEditor reports whether Edit > Paste should paste into the open
+// document. A modal keeps the editor's focus behind it while it holds a
+// text field of its own, so the item must be off then: a macOS menu
+// handles Cmd+V before the focused field does.
+func (a *app) pasteIntoEditor() bool {
+	if !a.editorFocused || a.doc == nil || a.doc.ReadOnly || a.previewMode {
+		return false
+	}
+	return !a.modalOpen()
+}
+
+// modalOpen reports whether a modal, or an input over the page such as
+// the find bar, is up.
+func (a *app) modalOpen() bool {
+	return a.settingsOpen || a.pageSettingsOpen || a.trashOpen || a.searchOpen ||
+		a.findOpen || a.insertMenuOpen || a.syncResult != nil ||
+		a.prompt != nil || a.confirm != nil || a.picker != nil || a.firstDoc != nil ||
+		(a.share != nil && a.share.open)
+}
+
+// syncPasteItem enables Edit > Paste only while the document's text has
+// the focus and nothing over the page takes the keyboard.
+func (a *app) syncPasteItem() {
+	if a.pasteItem == nil {
 		return
 	}
-	a.editorFocused = focused
-	if a.pasteItem != nil {
-		a.pasteItem.SetEnabled(focused)
+	want := a.pasteIntoEditor()
+	if a.pasteItem.IsEnabled() != want {
+		a.pasteItem.SetEnabled(want)
 	}
 }
 

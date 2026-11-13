@@ -382,7 +382,7 @@ func (a *app) openDoc(rel string) {
 		ScrollTop:  scrollTop,
 		codeFences: fences,
 	}
-	a.previewMode = false
+	a.previewMode = a.opensInPreview()
 	a.loadPageSettings(a.doc)
 	// Every page shows its title above the text, editable in place.
 	a.doc.ShowTitle = true
@@ -404,6 +404,24 @@ func (a *app) openDoc(rel string) {
 		a.sendWebOpen()
 	} else {
 		a.refocusEditor = true
+	}
+}
+
+// opensInPreview reports whether documents open as a reader.
+func (a *app) opensInPreview() bool {
+	return a.cfg != nil && a.cfg.OpenInPreview
+}
+
+// openNewDoc opens a document just made. A new page is for writing, so it
+// opens for editing even when documents default to the reader.
+func (a *app) openNewDoc(rel string) {
+	a.openDoc(rel)
+	if !a.previewMode {
+		return
+	}
+	a.previewMode = false
+	if a.isWebDoc() {
+		a.sendWebCommand("preview", false)
 	}
 }
 
@@ -800,7 +818,7 @@ func (a *app) askNewDocIn(parent string) {
 	}
 	*a.openState(parent) = true
 	a.refreshTree()
-	a.openDoc(rel)
+	a.openNewDoc(rel)
 }
 
 // askFirstDoc asks for the names of a first knowledge base and its first
@@ -832,7 +850,7 @@ func (a *app) createFirstDoc() error {
 	a.firstDoc = nil
 	*a.openState(kb) = true
 	a.refreshTree()
-	a.openDoc(rel)
+	a.openNewDoc(rel)
 	return nil
 }
 
@@ -1004,7 +1022,7 @@ func (a *app) saveNoteTo(rel string) error {
 	}
 	a.vault.RemoveNoteAssets()
 	a.refreshTree()
-	a.openDoc(docRel)
+	a.openNewDoc(docRel)
 	return nil
 }
 

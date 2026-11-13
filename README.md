@@ -34,7 +34,7 @@
 | 导出 | 文档 Markdown（含图片）ZIP、PDF、Word，整库 ZIP | [导出](docs/11-export.md) |
 | 远端同步 | S3 / NFS / SMB 单向镜像；自动或手动；回收站删除后同步远端 | [远端同步](docs/12-remote-sync.md) |
 | 公开分享 | 把文档导出成 PDF 上传到分享桶，生成 1/3/7 天或永久的链接 | [远端同步](docs/12-remote-sync.md#11-分享文档pdf) |
-| 页面设置 | 全局默认行距和字号，每篇文档可单独覆盖；不改写 Markdown | [编辑文档](docs/05-editing.md) |
+| 页面设置 | 全局默认行距、字号和打开模式（编辑/阅读），每篇文档可单独覆盖行距字号；不改写 Markdown | [编辑文档](docs/05-editing.md) |
 | 诊断日志 | 本机日志、三天保留、导出 ZIP 排错 | [设置与数据](docs/13-settings-and-data.md) |
 | 后台运行 | 关闭窗口后驻留菜单栏/通知区域，后台继续同步；从托盘真正退出 | [设置与数据](docs/13-settings-and-data.md#11-关闭窗口后台运行与退出) |
 

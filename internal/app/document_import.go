@@ -56,7 +56,7 @@ func (a *app) writeImportedDocument(parentRel, srcPath string, prepare func(rel 
 	}
 	*a.openState(parentRel) = true
 	a.refreshTree()
-	a.openDoc(rel)
+	a.openNewDoc(rel)
 	return nil
 }
 
