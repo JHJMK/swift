@@ -163,7 +163,7 @@ func (a *app) settingsModal(c *ui.Context) {
 	if width < 680 {
 		width = 680
 	}
-	height := float32(600)
+	height := float32(680)
 	if windowHeight-80 < height {
 		height = windowHeight - 80
 	}
@@ -200,6 +200,12 @@ func (a *app) settingsModal(c *ui.Context) {
 						a.aboutSettingsSection(c)
 					}
 				})
+
+				// The sync status stays outside the scrolling part, where it
+				// is read without scrolling to the bottom of the form.
+				if a.settingsSection == settingsSync && a.cfg.Sync.Enabled {
+					a.syncStatus(c)
+				}
 
 				msg, isErr := a.syncNote.get()
 				if !isErr && a.syncJob != nil {
@@ -288,7 +294,7 @@ func settingsHint(section string) string {
 	case settingsDisplay:
 		return "新文档默认使用的行距和字号。"
 	case settingsSync:
-		return "选择远端类型并填写连接信息。"
+		return "选择远端类型并填写连接信息；凭据只保存在本机。"
 	case settingsLogs:
 		return "只保存在这台电脑，用于排查应用和编辑器问题。"
 	case settingsAbout:

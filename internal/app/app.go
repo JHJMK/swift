@@ -174,6 +174,8 @@ type app struct {
 	insertFocus      bool
 	blockMenuOpen    bool
 	docMoreOpen      bool
+	// share is the open document's share popup, when it shows.
+	share *shareDialog
 	// rowMenu is the node whose tree row menu shows, by its path, and
 	// rowPlus the node whose add menu shows. cardMenu is the knowledge
 	// base card whose menu shows on the all-knowledge-bases page.

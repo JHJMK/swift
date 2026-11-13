@@ -51,6 +51,7 @@ func (a *app) view(c *ui.Context) {
 	a.trashModal(c)
 	a.searchModal(c)
 	a.pickerModal(c)
+	a.shareModal(c)
 	a.syncResultModal(c)
 	a.syncTitle()
 }

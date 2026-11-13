@@ -76,6 +76,11 @@ func (a *app) docTopBar(c *ui.Context, doc *docState) {
 			}
 			a.update()
 		}
+		share := a.chromeIconButton(c, iconShare, "分享", a.share != nil && a.share.open)
+		if share.Clicked() {
+			a.docMoreOpen = false
+			a.openShareDialog()
+		}
 		more := a.chromeIconButton(c, iconMore, "更多", a.docMoreOpen)
 		if more.Clicked() {
 			a.docMoreOpen = !a.docMoreOpen

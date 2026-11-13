@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -164,6 +165,16 @@ func Run() {
 		})
 		// Start after the window exists: the mirror's status repaints it.
 		a.startSync()
+		a.pruneShares()
+		// Timed links expire by the PDF being deleted, so sweep the shares
+		// while the app stays open, not only at startup.
+		go func() {
+			ticker := time.NewTicker(time.Hour)
+			defer ticker.Stop()
+			for range ticker.C {
+				a.pruneShares()
+			}
+		}()
 	})
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)

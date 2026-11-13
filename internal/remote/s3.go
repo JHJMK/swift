@@ -199,6 +199,33 @@ func (s *S3Store) PutFile(ctx context.Context, rel, path string) error {
 	return fmt.Errorf("上传 %s 失败：%w", rel, lastErr)
 }
 
+// PublicURL is where anyone can read rel, when the bucket allows it.
+func (s *S3Store) PublicURL(rel string) (string, error) {
+	u, err := s.objectURL(rel)
+	if err != nil {
+		return "", err
+	}
+	return u.String(), nil
+}
+
+// MaxPresignExpiry is the longest a signed URL may live; S3 refuses more,
+// and so does PresignGet.
+const MaxPresignExpiry = 7 * 24 * time.Hour
+
+// PresignGet signs a URL that reads rel until expires from now. It works
+// on a bucket nobody may read, which keeps the share bucket private.
+func (s *S3Store) PresignGet(rel string, expires time.Duration) (string, error) {
+	if expires <= 0 || expires > MaxPresignExpiry {
+		return "", errors.New("预签名有效期必须在 0 到 7 天之间")
+	}
+	u, err := s.objectURL(rel)
+	if err != nil {
+		return "", err
+	}
+	presignV4(u, s.accessKey, s.secretKey, s.sessionToken, s.region, time.Now(), expires)
+	return u.String(), nil
+}
+
 // waitRetry waits before the next attempt, or returns early when the
 // sync is cancelled.
 func (s *S3Store) waitRetry(ctx context.Context, attempt int) error {
@@ -405,6 +432,38 @@ func signV4(req *http.Request, payloadHash, accessKey, secretKey, sessionToken, 
 	signature := hex.EncodeToString(hmacSHA256(signingKey(secretKey, date, region), stringToSign))
 	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+accessKey+"/"+scope+
 		", SignedHeaders="+signedHeaders+", Signature="+signature)
+}
+
+// presignV4 turns u into a URL that reads the object until expires from
+// now. It signs the query, as AWS documents for a presigned GET, with an
+// unsigned payload.
+func presignV4(u *url.URL, accessKey, secretKey, sessionToken, region string, now time.Time, expires time.Duration) {
+	amzDate := now.UTC().Format("20060102T150405Z")
+	date := now.UTC().Format("20060102")
+	scope := date + "/" + region + "/s3/aws4_request"
+	q := url.Values{}
+	q.Set("X-Amz-Algorithm", "AWS4-HMAC-SHA256")
+	q.Set("X-Amz-Credential", accessKey+"/"+scope)
+	q.Set("X-Amz-Date", amzDate)
+	q.Set("X-Amz-Expires", strconv.Itoa(int(expires/time.Second)))
+	q.Set("X-Amz-SignedHeaders", "host")
+	if sessionToken != "" {
+		q.Set("X-Amz-Security-Token", sessionToken)
+	}
+	// Values are sorted by name and escaped as AWS canonicalizes them; no
+	// value holds a space, which Go would write as a plus.
+	query := q.Encode()
+	canonicalURI := u.EscapedPath()
+	if canonicalURI == "" {
+		canonicalURI = "/"
+	}
+	canonicalRequest := "GET\n" + canonicalURI + "\n" + query + "\n" +
+		"host:" + u.Host + "\n\nhost\nUNSIGNED-PAYLOAD"
+	requestHash := sha256.Sum256([]byte(canonicalRequest))
+	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" +
+		hex.EncodeToString(requestHash[:])
+	signature := hex.EncodeToString(hmacSHA256(signingKey(secretKey, date, region), stringToSign))
+	u.RawQuery = query + "&X-Amz-Signature=" + signature
 }
 
 // signedHeader reports whether a header is part of the signature. The

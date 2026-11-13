@@ -34,6 +34,7 @@
 | 从文件夹、Lakebook 归档、Word、TXT 导入 | [10 导入](10-import.md) |
 | 导出 Markdown、PDF、Word 或整个知识库 | [11 导出](11-export.md) |
 | 把文档镜像到 S3、NFS 或 SMB | [12 远端同步](12-remote-sync.md) |
+| 把一篇文档导出成 PDF 分享给别人 | [12 远端同步](12-remote-sync.md#11-分享文档pdf) |
 | 迁移文档目录、备份数据、查看日志和配置 | [13 设置与数据](13-settings-and-data.md) |
 | 查快捷键、斜杠命令和效率技巧 | [14 快捷键与技巧](14-shortcuts.md) |
 | 遇到问题 | [15 常见问题](15-faq.md) |
