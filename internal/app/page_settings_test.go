@@ -73,7 +73,8 @@ func TestPageSettingsUI(t *testing.T) {
 	a.settingsSection = settingsDisplay
 	tt := ui.NewTester(a.view, 1180, 900)
 	tt.Frame()
-	if !tt.HasText("文档显示") || !tt.HasText("新文档默认使用这里的行距和字号；单独设置过的文档会覆盖全局默认。") {
+	if !tt.HasText("文档显示") || !tt.HasText("单独设置过行距或字号的文档会覆盖全局默认。") ||
+		!tt.HasText("打开文档时") {
 		t.Fatalf("global page settings missing: %q", tt.Texts())
 	}
 	if err := tt.Click("完成"); err != nil {
@@ -118,5 +119,94 @@ func TestAboutVersion(t *testing.T) {
 	}
 	if got := versionFromFile(path); got != "9.8.7" {
 		t.Fatalf("versionFromFile = %q", got)
+	}
+}
+
+func TestAboutUIShowsVersionAndRepository(t *testing.T) {
+	old := mygo.App.Version()
+	t.Cleanup(func() { mygo.App.SetVersion(old) })
+	mygo.App.SetVersion("1.2.3")
+
+	a, _, _ := newTestApp(t)
+	a.settingsOpen = true
+	a.settingsSection = settingsAbout
+	tt := ui.NewTester(a.view, 1180, 760)
+
+	for _, text := range []string{"版本", "1.2.3", "GitHub", "https://github.com/JHJMK/swift"} {
+		if !tt.HasText(text) {
+			t.Fatalf("about page lacks %q: %q", text, tt.Texts())
+		}
+	}
+	if tt.HasText("运行环境") {
+		t.Fatalf("about page still shows the old runtime copy: %q", tt.Texts())
+	}
+}
+
+// Documents open in the mode the settings choose, and the button still
+// switches the one that is open.
+func TestOpenDocumentPreviewSetting(t *testing.T) {
+	a, _, rel := newTestApp(t)
+	second, err := a.vault.CreateDoc("我的知识库", "第二篇")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.vault.WriteDoc(second, "# 第二篇\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	a.cfg.OpenInPreview = true
+	a.openDoc(second)
+	if !a.previewMode {
+		t.Fatal("document did not open in preview mode")
+	}
+
+	a.cfg.OpenInPreview = false
+	a.openDoc(rel)
+	if a.previewMode {
+		t.Fatal("document opened in preview mode with the setting off")
+	}
+}
+
+// The display settings offer both modes, and the choice is saved.
+func TestSettingsOpenInPreview(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	tt := ui.NewTester(a.view, 1180, 760)
+	if err := tt.Click("设置"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("文档显示"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !tt.HasText("打开文档时") || !tt.HasText("阅读模式") {
+		t.Fatalf("display settings lack the open mode: %q", tt.Texts())
+	}
+	if err := tt.Click("阅读模式"); err != nil {
+		t.Fatal(err)
+	}
+	if !a.cfg.OpenInPreview {
+		t.Fatal("reading mode was not saved")
+	}
+	if err := tt.Click("编辑模式"); err != nil {
+		t.Fatal(err)
+	}
+	if a.cfg.OpenInPreview {
+		t.Fatal("editing mode was not saved")
+	}
+	a.settingsOpen = false
+	tt.Frame()
+}
+
+// A document just made opens for writing, whatever the reader default.
+func TestNewDocumentOpensForEditing(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	a.cfg.OpenInPreview = true
+	rel, err := a.vault.CreateDoc("我的知识库", "新文档")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.openNewDoc(rel)
+	if a.previewMode {
+		t.Fatal("a new document opened in reading mode")
 	}
 }

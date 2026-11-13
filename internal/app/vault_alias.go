@@ -4,11 +4,12 @@ import "swift/internal/vault"
 
 // The vault's types are named here so the app's views read as one package.
 type (
-	Node         = vault.Node
-	Vault        = vault.Vault
-	TrashEntry   = vault.TrashEntry
-	SearchResult = vault.SearchResult
-	RecentEntry  = vault.RecentEntry
+	Node            = vault.Node
+	Vault           = vault.Vault
+	TrashEntry      = vault.TrashEntry
+	SearchResult    = vault.SearchResult
+	RecentEntry     = vault.RecentEntry
+	NavigationEntry = vault.NavigationEntry
 )
 
 // OpenVault opens the folder at root as a vault.

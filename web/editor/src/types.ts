@@ -12,6 +12,7 @@ export interface OpenPayload {
   outlineWidth: number;
   focusTitle?: boolean;
   savedAt: string;
+  scrollTop: number;
   message?: string;
 }
 

@@ -23,6 +23,7 @@ func (a *app) view(c *ui.Context) {
 		a.deferred = nil
 		fn()
 	}
+	a.syncPasteItem()
 	if a.vault == nil {
 		a.onboarding(c)
 	} else {
@@ -51,6 +52,7 @@ func (a *app) view(c *ui.Context) {
 	a.trashModal(c)
 	a.searchModal(c)
 	a.pickerModal(c)
+	a.shareModal(c)
 	a.syncResultModal(c)
 	a.syncTitle()
 }
@@ -155,6 +157,7 @@ func (a *app) contextKB() *Node {
 func (a *app) goHome() {
 	a.flushTitle()
 	a.flushDoc()
+	a.dashboardCache = nil
 	a.doc = nil
 	a.allKBs = false
 	a.selected = ""
@@ -177,8 +180,9 @@ func (a *app) openAllKBs() {
 	a.update()
 }
 
-// openKB shows a knowledge base: the document open in it stays, and the
-// first document opens otherwise.
+// openKB shows a knowledge base: the document open in it stays, the last
+// document shown in it is restored otherwise, and the first document is
+// the fallback when that record is missing or stale.
 func (a *app) openKB(n *Node) {
 	a.flushTitle()
 	a.flushDoc()
@@ -195,7 +199,16 @@ func (a *app) openKB(n *Node) {
 	a.selected = n.Rel
 	a.selectedIsDir = true
 	a.refreshTree()
-	if rel := firstDocRel(n); rel != "" {
+	rel := ""
+	if nav := a.vault.NavigationFor(n.Rel); nav.Doc != "" {
+		if doc := a.findNode(nav.Doc); doc != nil && !doc.IsDir && relWithin(doc.Rel, n.Rel) {
+			rel = doc.Rel
+		}
+	}
+	if rel == "" {
+		rel = firstDocRel(n)
+	}
+	if rel != "" {
 		a.openDoc(rel)
 	}
 	a.update()
@@ -903,58 +916,33 @@ func (a *app) nodeActions(n *Node) []nodeAction {
 
 func (a *app) homeView(c *ui.Context) {
 	t := c.Theme()
-	recent := a.vault.Recent()
-	kbs, docs := a.counts()
 	ui.Column(c).Fill().Children(func() {
 		ui.Box(c).Absolute().Left(0).Top(0).Right(0).Height(c.TitleBar().Height).DragWindow()
 		ui.Scroll(c).Grow(1).Children(func() {
-			ui.Column(c).Padding(40, 44).Gap(22).MaxWidth(900).Children(func() {
+			ui.Column(c).FillWidth().Padding(40, 44).Gap(22).Children(func() {
 				ui.Column(c).Gap(4).Children(func() {
 					ui.Text(c, "工作台").FontSize(28).Bold()
-					ui.Textf(c, "%d 个知识库 · %d 篇文档", kbs, docs).FontSize(14).TextColor(t.TextMuted)
+					ui.Text(c, "记录、整理和回顾你的知识库").FontSize(14).TextColor(t.TextMuted)
 				})
 
-				ui.Row(c).Gap(12).Children(func() {
-					actionCard(c, iconFile, "新建文档", "写一篇 Markdown 文档", a.askNewDocAt)
-					actionCard(c, iconBook, "新建知识库", "用知识库整理内容", a.askNewKnowledgeBase)
-					actionCard(c, iconSearch, "搜索文档", "在标题和正文中查找", a.openSearch)
-					importCard := actionCard(c, iconDownload, "导入知识库", "复制、引用、Lakebook", func() {
-						a.importMenuOpen = !a.importMenuOpen
-						a.update()
-					})
-					dropdownRight(c, importCard, &a.importMenuOpen, func() {
-						a.importMenuItems(c)
-					})
-				})
-
-				ui.Text(c, "最近打开").FontSize(16).Bold().Padding(6, 0, 0, 0)
-				ui.Column(c).Padding(6).Radius(10).Background(t.Surface).Border(1, t.Border).Children(func() {
-					if len(recent) == 0 {
-						ui.Column(c).Padding(20).Gap(4).Children(func() {
-							ui.Text(c, "还没有打开过的文档").FontSize(14)
-							ui.Text(c, "从左侧选择知识库，或新建一篇文档开始。").FontSize(13).TextColor(t.TextMuted)
-						})
-						return
-					}
-					for _, r := range recent {
-						rel := r.Rel
-						opened := r.OpenedAt.Local()
-						row := ui.Row(c).Key(rel).Padding(9, 10).Gap(10).Radius(6).AlignItems(ui.Center).
-							OnClick(func() {
-								a.openDoc(rel)
+				ui.Row(c).FillWidth().MinWidth(0).Justify(ui.Center).Children(func() {
+					ui.Column(c).WidthPercent(100).MinWidth(0).Gap(22).MaxWidth(900).Children(func() {
+						ui.Row(c).Gap(12).Children(func() {
+							actionCard(c, iconFile, "新建文档", "写一篇 Markdown 文档", a.askNewDocAt)
+							actionCard(c, iconBook, "新建知识库", "用知识库整理内容", a.askNewKnowledgeBase)
+							actionCard(c, iconSearch, "搜索文档", "在标题和正文中查找", a.openSearch)
+							importCard := actionCard(c, iconDownload, "导入知识库", "复制、引用、Lakebook", func() {
+								a.importMenuOpen = !a.importMenuOpen
 								a.update()
 							})
-						if row.Hovered() {
-							row.Background(ui.Hex("#f7f8fa"))
-						}
-						row.Children(func() {
-							ui.Icon(c, iconFile).FontSize(16).TextColor(t.TextMuted)
-							ui.Text(c, titleOf(rel)).Grow(1).SingleLine()
-							ui.Text(c, parentLabel(rel)).FontSize(13).TextColor(t.TextMuted).SingleLine()
-							ui.Text(c, opened.Format("01-02 15:04")).FontSize(13).TextColor(t.TextMuted).
-								Width(96).TextAlign(ui.End)
+							dropdownRight(c, importCard, &a.importMenuOpen, func() {
+								a.importMenuItems(c)
+							})
 						})
-					}
+
+						ui.Text(c, "统计看板").FontSize(16).Bold().Padding(6, 0, 0, 0)
+						a.dashboardView(c)
+					})
 				})
 			})
 		})

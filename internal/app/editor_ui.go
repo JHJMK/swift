@@ -76,6 +76,11 @@ func (a *app) docTopBar(c *ui.Context, doc *docState) {
 			}
 			a.update()
 		}
+		share := a.chromeIconButton(c, iconShare, "分享", a.share != nil && a.share.open)
+		if share.Clicked() {
+			a.docMoreOpen = false
+			a.openShareDialog()
+		}
 		more := a.chromeIconButton(c, iconMore, "更多", a.docMoreOpen)
 		if more.Clicked() {
 			a.docMoreOpen = !a.docMoreOpen
@@ -337,6 +342,15 @@ func (a *app) saveDefaultPageSettings(s PageSettings) error {
 		}
 	}
 	return nil
+}
+
+// saveOpenInPreview stores whether documents open as a reader.
+func (a *app) saveOpenInPreview(read bool) error {
+	if a.cfg == nil || a.cfg.OpenInPreview == read {
+		return nil
+	}
+	a.cfg.OpenInPreview = read
+	return saveConfig(a.cfg)
 }
 
 // editorToolbar is the compact icon toolbar above the page.

@@ -41,6 +41,7 @@ type webEditorOpen struct {
 	OutlineWidth      float32 `json:"outlineWidth"`
 	FocusTitle        bool    `json:"focusTitle,omitempty"`
 	SavedAt           string  `json:"savedAt"`
+	ScrollTop         float64 `json:"scrollTop"`
 }
 
 type webEditorStatus struct {
@@ -119,6 +120,12 @@ func (s *webEditorService) Ready(context.Context) {
 // Changed stores the editor's Markdown as it is typed.
 func (s *webEditorService) Changed(_ context.Context, id, markdown string) {
 	mygo.RunOnMain(func() { s.a.webChanged(id, markdown) })
+}
+
+// Scroll stores the page's scroll position in memory. It is written with
+// the rest of the navigation state when the document or window changes.
+func (s *webEditorService) Scroll(_ context.Context, id string, scrollTop float64) {
+	mygo.RunOnMain(func() { s.a.webScroll(id, scrollTop) })
 }
 
 // Rename renames the open document, or gives the quick note its title.
@@ -320,6 +327,7 @@ func (a *app) webOpenPayload() webEditorOpen {
 		OutlineWidth:      a.outlineWidth(),
 		FocusTitle:        untitledTitle(doc.Title) && doc.TitleDraft == "" && !doc.ReadOnly && !a.previewMode,
 		SavedAt:           savedAt,
+		ScrollTop:         doc.ScrollTop,
 	}
 }
 
@@ -398,6 +406,31 @@ func (a *app) webChanged(id, markdown string) {
 	}
 	doc.Markdown = markdown
 	a.markDocDirty()
+}
+
+func (a *app) webScroll(id string, scrollTop float64) {
+	if a.vault == nil || id == "" || id == "note" {
+		return
+	}
+	n := a.findNode(id)
+	if n == nil || n.IsDir {
+		return
+	}
+	kb := topRel(id)
+	nav := a.vault.NavigationFor(kb)
+	// A late message from the document that just closed must not replace
+	// the record of the document now shown in its knowledge base.
+	if nav.Doc != id {
+		return
+	}
+	if nav.ScrollTop == scrollTop {
+		return
+	}
+	a.vault.SetNavigation(kb, id, scrollTop)
+	a.saveNavigation()
+	if a.doc != nil && a.doc.Rel == id {
+		a.doc.ScrollTop = a.vault.NavigationFor(kb).ScrollTop
+	}
 }
 
 // webRename renames the document to the page's inline title.

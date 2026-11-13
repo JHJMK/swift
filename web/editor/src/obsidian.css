@@ -127,27 +127,11 @@ button {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-width: none;
 }
 
 #scroller::-webkit-scrollbar {
-  width: 12px;
-}
-
-#scroller::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-#scroller::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.18);
-  border: 3px solid transparent;
-  border-radius: 8px;
-  background-clip: content-box;
-}
-
-#scroller::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.3);
-  border: 3px solid transparent;
-  background-clip: content-box;
+  display: none;
 }
 
 .markdown-source-view {

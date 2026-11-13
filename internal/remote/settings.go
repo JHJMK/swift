@@ -33,6 +33,10 @@ const (
 // when Settings.IntervalSeconds leaves it unset.
 const DefaultInterval = 15 * time.Second
 
+// defaultSharePrefix is where shared files sit in the share bucket when
+// the settings leave the prefix empty.
+const defaultSharePrefix = "share"
+
 // Settings is the remote sync configuration, saved with the app's other
 // settings.
 type Settings struct {
@@ -58,6 +62,13 @@ type Settings struct {
 	// https://bucket.host/key. Self-hosted stores such as MinIO usually
 	// need it.
 	PathStyle bool `json:"pathStyle,omitempty"`
+
+	// ShareBucket is where exported PDFs are published, when the provider
+	// is S3. It uses the service and credentials above, so the backup
+	// bucket can stay private. Empty turns sharing off.
+	ShareBucket string `json:"shareBucket,omitempty"`
+	// SharePrefix is the key prefix shared PDFs are stored under.
+	SharePrefix string `json:"sharePrefix,omitempty"`
 
 	// MountPath is the mounted folder of an NFS or SMB share.
 	MountPath string `json:"mountPath,omitempty"`
@@ -86,6 +97,15 @@ func (s Settings) Normalized() Settings {
 	s.SessionToken = strings.TrimSpace(s.SessionToken)
 	if prefix, err := cleanPrefix(s.Prefix); err == nil {
 		s.Prefix = prefix
+	}
+	s.ShareBucket = strings.TrimSpace(s.ShareBucket)
+	if s.ShareBucket == "" {
+		s.SharePrefix = ""
+	} else if prefix, err := cleanPrefix(s.SharePrefix); err == nil {
+		s.SharePrefix = prefix
+		if s.SharePrefix == "" {
+			s.SharePrefix = defaultSharePrefix
+		}
 	}
 	s.MountPath = strings.TrimSpace(s.MountPath)
 	if s.MountPath != "" {
@@ -128,14 +148,19 @@ func (s Settings) Validate() error {
 		if _, err := s3Endpoint(s); err != nil {
 			return err
 		}
-		if strings.TrimSpace(s.Bucket) == "" {
-			return errors.New("请填写 S3 存储桶")
-		}
-		if strings.ContainsAny(s.Bucket, `/\`) || strings.ContainsAny(s.Bucket, " \t\r\n") {
-			return errors.New("S3 存储桶名称不能包含空格或斜杠")
+		if err := validateBucketName(s.Bucket); err != nil {
+			return err
 		}
 		if _, err := cleanPrefix(s.Prefix); err != nil {
 			return err
+		}
+		if s.ShareBucket != "" {
+			if err := validateBucketName(s.ShareBucket); err != nil {
+				return errors.New("分享桶：" + err.Error())
+			}
+			if _, err := cleanPrefix(s.SharePrefix); err != nil {
+				return errors.New("分享前缀：" + err.Error())
+			}
 		}
 		if strings.TrimSpace(s.AccessKey) == "" || strings.TrimSpace(s.SecretKey) == "" {
 			return errors.New("请填写 S3 的 Access Key 和 Secret Key")
@@ -178,6 +203,43 @@ func (s Settings) Store() (Store, error) {
 		return NewDirStore(s.MountPath, s.Provider)
 	}
 	return nil, errors.New("未知的远端同步类型")
+}
+
+// ShareStore builds the store exported PDFs go to. It speaks to the same
+// service as the mirror, with the same credentials, but writes to the
+// share bucket and prefix.
+func (s Settings) ShareStore() (*S3Store, error) {
+	s = s.Normalized()
+	if s.Provider != ProviderS3 {
+		return nil, errors.New("公开分享只支持 S3")
+	}
+	if s.ShareBucket == "" {
+		return nil, errors.New("请先在设置里填写分享桶")
+	}
+	if err := validateBucketName(s.ShareBucket); err != nil {
+		return nil, errors.New("分享桶：" + err.Error())
+	}
+	prefix, err := cleanPrefix(s.SharePrefix)
+	if err != nil {
+		return nil, errors.New("分享前缀：" + err.Error())
+	}
+	shared := s
+	shared.Bucket = s.ShareBucket
+	shared.Prefix = prefix
+	shared.ShareBucket = ""
+	shared.SharePrefix = ""
+	return NewS3Store(shared)
+}
+
+// validateBucketName checks a bucket name as S3 accepts it.
+func validateBucketName(bucket string) error {
+	if strings.TrimSpace(bucket) == "" {
+		return errors.New("请填写 S3 存储桶")
+	}
+	if strings.ContainsAny(bucket, `/\`) || strings.ContainsAny(bucket, " \t\r\n") {
+		return errors.New("S3 存储桶名称不能包含空格或斜杠")
+	}
+	return nil
 }
 
 // Target names the remote a manifest belongs to. A manifest made for

@@ -104,6 +104,7 @@ func (a *app) prepareQuit() {
 	a.stopKBWatch()
 	a.flushTitle()
 	a.flushDoc()
+	a.saveNavigation()
 	a.flushSync()
 }
 
@@ -117,6 +118,7 @@ func (a *app) hideToBackground() {
 	// the window leaves the screen.
 	a.flushTitle()
 	a.flushDoc()
+	a.saveNavigation()
 	// A macOS window hidden while it is in native full screen leaves a
 	// black full-screen Space behind. Leave full screen first, then hide
 	// the window once the system reports the transition.

@@ -79,7 +79,6 @@ func (a *app) syncSettingsSection(c *ui.Context) {
 		default:
 			ui.Text(c, "请选择 S3、NFS 或 SMB。").FontSize(12).TextColor(t.TextMuted)
 		}
-		a.syncStatus(c)
 	})
 }
 
@@ -145,7 +144,17 @@ func (a *app) s3SyncFields(c *ui.Context) {
 			a.syncInput(c, "Session Token（可选）", "临时凭证的会话令牌", &s.SessionToken, true)
 		})
 		ui.Checkbox(c, &s.PathStyle, "路径式地址（MinIO、Ceph 等自建存储通常需要）")
-		ui.Text(c, "凭据保存在本机的设置文件中；区域留空时使用 us-east-1。").
+
+		ui.Box(c).Height(1).Background(t.Border).Margin(4, 0)
+		ui.Row(c).Gap(12).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
+				a.syncInput(c, "分享桶（可选）", "公开读的桶，留空则不分享", &s.ShareBucket, false)
+			})
+			ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
+				a.syncInput(c, "分享前缀", "默认 share", &s.SharePrefix, false)
+			})
+		})
+		ui.Text(c, "分享时把文档导出成 PDF 上传到这里；分享桶需允许公开读取，备份桶仍可保持私有。").
 			FontSize(12).TextColor(t.TextMuted)
 	})
 }

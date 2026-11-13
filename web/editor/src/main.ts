@@ -40,6 +40,7 @@ import { cachedMermaidSvg, renderMermaidSvg } from "./mermaid";
 import { installDiagnostics } from "./diagnostics";
 
 import {
+  codeFenceDeletionRanges,
   countCharacters,
   countWords,
   fenceAt,
@@ -118,6 +119,8 @@ let previousTitle = "";
 let saveStateTimer = 0;
 let countTimer = 0;
 let outlineTimer = 0;
+let scrollTimer = 0;
+let scrollRestoreRaf = 0;
 let toastTimer = 0;
 let outlineWidth = 240;
 let outlineResizePointer: number | null = null;
@@ -416,6 +419,8 @@ function makeEditorState(doc: string): EditorState {
       saveCompartment.of(EditorView.editable.of(true)),
       EditorView.inputHandler.of((view, from, to, text) => fenceInput(view, from, to, text)),
       Prec.high(keymap.of([
+        { key: "Backspace", run: (view) => deleteFencePair(view, false) },
+        { key: "Delete", run: (view) => deleteFencePair(view, true) },
         { key: "Enter", run: fenceEnter },
         { key: "Mod-a", run: selectCodeBlock },
       ])),
@@ -623,6 +628,18 @@ els.editor.addEventListener("click", (event) => {
 
 els.editor.addEventListener("paste", handlePaste, true);
 document.addEventListener("copy", copyMixedSelection, true);
+document.addEventListener(
+  "cut",
+  (event) => {
+    if (!isReadOnly()) return;
+    const target = event.target;
+    if (!(target instanceof Node)) return;
+    if (!view.contentDOM.contains(target) && !els.title.contains(target)) return;
+    event.preventDefault();
+    event.stopPropagation();
+  },
+  true,
+);
 
 // Keep collapsed fences from moving text under the pointer while selecting.
 // Plain clicks still expand a fence after mouseup.
@@ -718,6 +735,32 @@ function syncChanged() {
       console.warn("changed failed", err);
       setStatus("保存失败", "error");
     });
+}
+
+function flushScrollPosition() {
+  window.clearTimeout(scrollTimer);
+  scrollTimer = 0;
+  if (!current || !docId || docId === "note" || loading) return;
+  void bridge
+    .call<void>(`${SERVICE}.Scroll`, docId, Math.max(0, els.scroller.scrollTop))
+    .catch((err) => console.warn("scroll failed", err));
+}
+
+function queueScrollPosition() {
+  if (!current || !docId || docId === "note" || loading) return;
+  window.clearTimeout(scrollTimer);
+  scrollTimer = window.setTimeout(flushScrollPosition, 220);
+}
+
+function restoreDocumentScroll(scrollTop: number) {
+  const top = Number.isFinite(scrollTop) && scrollTop > 0 ? scrollTop : 0;
+  window.cancelAnimationFrame(scrollRestoreRaf);
+  els.scroller.scrollTop = top;
+  // CodeMirror finishes its first layout on the next frame.
+  scrollRestoreRaf = window.requestAnimationFrame(() => {
+    scrollRestoreRaf = 0;
+    els.scroller.scrollTop = top;
+  });
 }
 
 function queueCount() {
@@ -831,6 +874,7 @@ function applyOutlineWidth(width: number) {
 }
 
 function openDocument(payload: OpenPayload) {
+  if (current && payload.id !== docId) flushScrollPosition();
   loading = true;
   closeSlash();
   closeBlockMenu();
@@ -874,7 +918,7 @@ function openDocument(payload: OpenPayload) {
     view.focus();
     void bridge.call<void>(`${SERVICE}.SetFocused`, !isReadOnly()).catch(() => undefined);
   }
-  els.scroller.scrollTop = 0;
+  restoreDocumentScroll(payload.scrollTop);
   updateCount();
   renderOutline();
   refreshToolbar();
@@ -1088,6 +1132,21 @@ function fenceEnter(view: EditorView): boolean {
   const closing = /^(\s{0,3})(`{3,}|~{3,})\s*$/.exec(close.text);
   if (!closing || closing[2][0] !== open[2][0] || closing[2].length < open[2].length) return false;
   view.dispatch({ selection: { anchor: body.from }, scrollIntoView: true });
+  return true;
+}
+
+/** deleteFencePair removes both sides of a closed fence when a normal
+ * Backspace or Delete would leave only one side behind. */
+function deleteFencePair(view: EditorView, forward: boolean): boolean {
+  if (isReadOnly() || view.state.selection.ranges.length !== 1) return false;
+  const { from, to } = view.state.selection.main;
+  const ranges = codeFenceDeletionRanges(view.state.doc.toString(), from, to, forward);
+  if (!ranges) return false;
+  view.dispatch({
+    changes: ranges,
+    userEvent: from === to ? (forward ? "delete.forward" : "delete.backward") : "delete.selection",
+    scrollIntoView: true,
+  });
   return true;
 }
 
@@ -1905,7 +1964,14 @@ document.addEventListener(
   true,
 );
 
-els.scroller.addEventListener("scroll", closeBlockMenu, { passive: true });
+els.scroller.addEventListener(
+  "scroll",
+  () => {
+    closeBlockMenu();
+    queueScrollPosition();
+  },
+  { passive: true },
+);
 
 view.dom.addEventListener("keydown", (event) => {
   if (!slashOpen || event.isComposing) return;
@@ -2026,6 +2092,9 @@ bridge.on(EVENT_RELOAD, (payload) => {
   reloadDocument(payload as ReloadPayload);
 });
 
+window.addEventListener("pagehide", flushScrollPosition);
+window.addEventListener("beforeunload", flushScrollPosition);
+
 function timeNow(): string {
   return new Date().toLocaleTimeString("zh-CN", { hour12: false });
 }
@@ -2106,6 +2175,7 @@ flowchart LR
       outlineOpen: false,
       outlineWidth: 240,
       savedAt: "",
+      scrollTop: 0,
     } satisfies OpenPayload);
   }, 0);
   return {

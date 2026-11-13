@@ -14,3 +14,7 @@ AGENTS.md
 .gitlab-ci.yaml
 /deploy/
 /docs/superpowers
+
+# Local browser verification artifacts
+/.playwright-cli/
+/output/playwright/

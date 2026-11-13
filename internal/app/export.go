@@ -97,7 +97,26 @@ func (a *app) exportPDF() {
 	if !strings.EqualFold(filepath.Ext(p), ".pdf") {
 		p += ".pdf"
 	}
+	a.printPDF(func(pdf []byte, err error) {
+		if err != nil {
+			a.setError(err)
+			a.update()
+			return
+		}
+		if err := os.WriteFile(p, pdf, 0o644); err != nil {
+			a.setError(err)
+		}
+		a.update()
+	})
+}
 
+// printPDF renders the open document as an A4 PDF and calls done with the
+// bytes. It must run on the main thread; done runs on it too, once.
+func (a *app) printPDF(done func(pdf []byte, err error)) {
+	if a.doc == nil {
+		done(nil, errors.New("没有打开的文档"))
+		return
+	}
 	pageHTML := "<!doctype html><html><head><meta charset=\"utf-8\">" +
 		"<meta name=\"swift-export\" content=\"1\"><title>" + html.EscapeString(a.doc.Title) + "</title>" +
 		pdfStyle + "</head><body>" + a.exportText().HTML() + "</body></html>"
@@ -109,13 +128,13 @@ func (a *app) exportPDF() {
 		Hidden: true,
 	})
 	if win == nil || win.Page() == nil {
-		a.errMsg = "无法创建导出页面"
+		done(nil, errors.New("无法创建导出页面"))
 		return
 	}
 	page := win.Page()
 	finished := false
 	var timeout *time.Timer
-	finish := func(err error) {
+	finish := func(pdf []byte, err error) {
 		if finished {
 			return
 		}
@@ -124,16 +143,13 @@ func (a *app) exportPDF() {
 			timeout.Stop()
 		}
 		win.Close()
-		if err != nil {
-			a.setError(err)
-		}
-		a.update()
+		done(pdf, err)
 	}
 	timeout = time.AfterFunc(20*time.Second, func() {
-		mygo.RunOnMain(func() { finish(errors.New("导出 PDF 超时")) })
+		mygo.RunOnMain(func() { finish(nil, errors.New("PDF 生成超时")) })
 	})
 	page.OnDidFailLoad(func(e *mygo.LoadError) {
-		finish(fmt.Errorf("导出 PDF 失败：%s", e.Description))
+		finish(nil, fmt.Errorf("PDF 生成失败：%s", e.Description))
 	})
 	page.OnDidFinishLoad(func() {
 		// The blank page a window starts on has no marker; ours is the
@@ -150,15 +166,7 @@ func (a *app) exportPDF() {
 			Margins:    &mygo.Margins{Top: 0.7, Right: 0.7, Bottom: 0.7, Left: 0.7},
 			Background: true,
 		})
-		if err != nil {
-			finish(err)
-			return
-		}
-		if err := os.WriteFile(p, pdf, 0o644); err != nil {
-			finish(err)
-			return
-		}
-		finish(nil)
+		finish(pdf, err)
 	})
 	page.LoadHTML(pageHTML, "")
 }
