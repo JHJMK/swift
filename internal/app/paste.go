@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"strings"
 
 	"github.com/egoist/mygo"
@@ -91,6 +92,75 @@ func (a *app) pasteFromMenuWeb() {
 	if b, err := data.Read(transfer.Text); err == nil && len(b) > 0 {
 		a.sendWebInsert(string(b))
 	}
+}
+
+// webEditorClipboard is what the page's Paste menu items get: the
+// clipboard's rich text, and its plain text. Done says the app inserted
+// the clipboard itself, as it does for a picture it saved.
+type webEditorClipboard struct {
+	HTML     string `json:"html"`
+	Markdown string `json:"markdown"`
+	Text     string `json:"text"`
+	Done     bool   `json:"done"`
+}
+
+// ReadClipboard answers the page's Paste menu: the clipboard as the page
+// can insert it. A picture is saved as an asset and inserted at once, as
+// Edit > Paste does, unless only the text was asked for.
+func (s *webEditorService) ReadClipboard(_ context.Context, plain bool) (webEditorClipboard, error) {
+	var out webEditorClipboard
+	var err error
+	mygo.RunOnMain(func() { out, err = s.a.readWebClipboard(plain) })
+	return out, err
+}
+
+// readWebClipboard reads the clipboard for the page. Main thread only.
+func (a *app) readWebClipboard(plain bool) (webEditorClipboard, error) {
+	if a.doc == nil || a.doc.ReadOnly || a.previewMode || !a.isWebDoc() {
+		return webEditorClipboard{Done: true}, nil
+	}
+	if !plain {
+		if png := mygo.Clipboard.ReadImage(); png != nil {
+			result, err := a.webSaveAsset("图片.png", png, true)
+			if err != nil {
+				return webEditorClipboard{}, err
+			}
+			a.sendWebInsert(result.Text)
+			return webEditorClipboard{Done: true}, nil
+		}
+	}
+	formats := []transfer.Format{transfer.HTML, transfer.Markdown, richtext.RTF, transfer.Text}
+	if plain {
+		formats = []transfer.Format{transfer.Text}
+	}
+	data, err := mygo.Clipboard.Read(formats...)
+	if err != nil {
+		// An empty clipboard leaves nothing to paste.
+		return webEditorClipboard{}, nil
+	}
+	return webClipboardPayload(data), nil
+}
+
+// webClipboardPayload picks what the page can insert: HTML to convert as
+// a native paste does, Markdown when the clipboard offers it or only RTF
+// holds the formatting, and the plain text.
+func webClipboardPayload(data transfer.Data) webEditorClipboard {
+	var out webEditorClipboard
+	if b, err := data.Read(transfer.HTML); err == nil {
+		out.HTML = string(b)
+	}
+	if b, err := data.Read(transfer.Markdown); err == nil {
+		out.Markdown = string(b)
+	}
+	if strings.TrimSpace(out.Markdown) == "" {
+		if b, err := data.Read(richtext.RTF); err == nil {
+			out.Markdown = strings.TrimSpace(richtext.ParseRTF(b).Markdown())
+		}
+	}
+	if b, err := data.Read(transfer.Text); err == nil {
+		out.Text = string(b)
+	}
+	return out
 }
 
 func (a *app) pasteImage(png []byte) {

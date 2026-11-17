@@ -1260,6 +1260,91 @@ body.is-resizing-outline {
   font-size: 12px;
 }
 
+/* Right-click menu ---------------------------------------------------- */
+
+.editor-menu {
+  position: fixed;
+  z-index: 70;
+  min-width: 200px;
+  max-width: 300px;
+  max-height: calc(100vh - 16px);
+  padding: 5px;
+  overflow-y: auto;
+  border: 1px solid rgba(0, 0, 0, 0.07);
+  border-radius: 12px;
+  background: var(--background-primary);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.06);
+  font-family: var(--font-interface);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.editor-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 32px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-normal);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+  text-align: left;
+  cursor: default;
+  outline: none;
+}
+
+.editor-menu-item:hover:not(:disabled),
+.editor-menu-item:focus-visible:not(:disabled) {
+  background: rgba(0, 0, 0, 0.055);
+}
+
+.editor-menu-item:disabled {
+  color: var(--text-faint);
+}
+
+.editor-menu-icon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  color: var(--text-muted);
+}
+
+.editor-menu-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.editor-menu-item:disabled .editor-menu-icon {
+  opacity: 0.55;
+}
+
+.editor-menu-label {
+  flex: 1;
+  white-space: nowrap;
+}
+
+.editor-menu-shortcut {
+  flex: none;
+  margin-left: 20px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+}
+
+.editor-menu-sep {
+  height: 1px;
+  margin: 4px 7px;
+  background: rgba(0, 0, 0, 0.07);
+}
+
 /* Notice ------------------------------------------------------------- */
 
 .notice {
