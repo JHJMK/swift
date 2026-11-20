@@ -61,7 +61,8 @@ type webEditorCommand struct {
 }
 
 type webEditorInsert struct {
-	Text string `json:"text"`
+	Text  string `json:"text"`
+	Plain string `json:"plain,omitempty"`
 }
 
 type webEditorReload struct {
@@ -368,11 +369,15 @@ func (a *app) sendWebReload(doc *docState, markdown string, mtime time.Time) {
 	})
 }
 
-func (a *app) sendWebInsert(text string) {
+func (a *app) sendWebInsert(text string) { a.sendWebInsertText(text, "") }
+
+// sendWebInsertText also carries the plain form, which a page field such
+// as the find bar pastes; the Markdown form is for the document.
+func (a *app) sendWebInsertText(text, plain string) {
 	if a.webView == nil || text == "" {
 		return
 	}
-	_ = webEditorInsertEvent.EmitPage(a.webView.Page(), webEditorInsert{Text: text})
+	_ = webEditorInsertEvent.EmitPage(a.webView.Page(), webEditorInsert{Text: text, Plain: plain})
 }
 
 func (a *app) sendWebTitle() {

@@ -77,9 +77,9 @@ func (a *app) toastView(c *ui.Context) {
 }
 
 func (a *app) syncTitle() {
-	title := "语燕"
+	title := "Swift"
 	if a.doc != nil {
-		title = a.doc.Title + " — 语燕"
+		title = a.doc.Title + " — Swift"
 	}
 	if title != a.lastTitle {
 		a.lastTitle = title
@@ -95,7 +95,7 @@ func (a *app) onboarding(c *ui.Context) {
 		ui.Box(c).Absolute().Left(0).Top(0).Right(0).Height(c.TitleBar().Height).DragWindow()
 		ui.Column(c).Grow(1).Center().Gap(16).Padding(40).Children(func() {
 			brandLogo(c, 56, 14)
-			ui.Text(c, "语燕").FontSize(36).Bold().Padding(6, 0, 0, 0)
+			ui.Text(c, "Swift").FontSize(36).Bold().Padding(6, 0, 0, 0)
 			ui.Text(c, "本地优先的个人知识库").FontSize(16).TextColor(t.TextMuted)
 			ui.Text(c, "选择一个文件夹作为文档目录。知识库、目录和 Markdown 文档都会保存在这里，之后可以在设置中迁移。").
 				MaxWidth(480).TextAlign(ui.Center).TextColor(t.TextMuted)
@@ -264,7 +264,7 @@ func (a *app) globalSidebar(c *ui.Context) {
 		ui.Row(c).Height(bar.Height).DragWindow()
 		ui.Row(c).Padding(2, 16, 8, 16).Gap(9).AlignItems(ui.Center).DragWindow().Children(func() {
 			brandLogo(c, 30, 8)
-			ui.Text(c, "语燕").FontSize(18).Bold().Grow(1)
+			ui.Text(c, "Swift").FontSize(18).Bold().Grow(1)
 			collapse := a.chromeIconButton(c, iconChevronLeft, "收起侧栏", false)
 			if collapse.Clicked() {
 				a.sidebarCollapsed = true
@@ -879,7 +879,7 @@ func (a *app) nodeActions(n *Node) []nodeAction {
 	}
 	if !n.IsDir {
 		acts = append(acts,
-			nodeAction{label: "复制链接", icon: iconLink, run: func() { a.copyNodeLink(rel) }},
+			nodeAction{label: "复制文档路径", icon: iconCopy, run: func() { a.copyNodePath(rel) }},
 			nodeAction{label: "置顶文档", icon: iconPin, run: func() {
 				if d := a.findNode(rel); d != nil {
 					a.pinDoc(d)
@@ -896,7 +896,7 @@ func (a *app) nodeActions(n *Node) []nodeAction {
 	}
 	if !n.IsDir {
 		acts = append(acts,
-			nodeAction{label: "导出 Markdown（含图片）", icon: iconDownload, run: func() {
+			nodeAction{label: "导出 Markdown", icon: iconDownload, run: func() {
 				a.openDoc(rel)
 				a.exportDoc("md")
 			}},

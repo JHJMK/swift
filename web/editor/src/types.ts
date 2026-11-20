@@ -44,6 +44,15 @@ export interface CommandPayload {
   message?: string;
 }
 
+/** ClipboardResult is what the page's Paste menu gets from the app. */
+export interface ClipboardResult {
+  html: string;
+  markdown: string;
+  text: string;
+  /** done says the app already inserted the clipboard, a picture it saved. */
+  done: boolean;
+}
+
 export interface ReloadPayload {
   id: string;
   content: string;
@@ -57,6 +66,8 @@ export interface RenamePayload {
 
 export interface TextPayload {
   text: string;
+  /** Plain form, used when the target is a page field rather than the note. */
+  plain?: string;
 }
 
 export interface RenameResult {

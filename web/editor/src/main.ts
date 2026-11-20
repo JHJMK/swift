@@ -50,6 +50,12 @@ import {
 } from "./markdown";
 import { assetUrl, clipboardFiles, isImageFile } from "./runtime";
 import {
+  SEPARATOR,
+  closeContextMenu,
+  showContextMenu,
+  type ContextMenuEntry,
+} from "./context-menu";
+import {
   readBlockLine,
   transformBlockLines,
   type BlockKind,
@@ -72,6 +78,7 @@ import type {
   SettingsPayload,
   StatusPayload,
   TextPayload,
+  ClipboardResult,
 } from "./types";
 
 const EVENT_OPEN = "web-editor:open";
@@ -151,6 +158,13 @@ const turndown = new TurndownService({
   emDelimiter: "*",
   strongDelimiter: "**",
 });
+// Turndown escapes `_` because CommonMark reads it as emphasis. This
+// editor does not, so a pasted name such as
+// `lake_autovacuum_stale_partition_threshold` would otherwise enter the
+// note as `lake\_autovacuum\_...`, and the backslashes come back out
+// whenever the text is copied again.
+const escapeMarkdown = turndown.escape.bind(turndown);
+turndown.escape = (text: string) => escapeMarkdown(text).replace(/\\_/g, "_");
 turndown.addRule("strikethrough", {
   filter: ["del", "s"],
   replacement: (content) => `~~${content}~~`,
@@ -366,8 +380,6 @@ const obsidianHighlightStyle = HighlightStyle.define([
   { tag: [t.tagName, t.angleBracket], color: "#c41f36" },
   { tag: t.link, color: "#6d3fd4", textDecoration: "underline" },
   { tag: t.url, color: "#6d3fd4" },
-  { tag: t.emphasis, fontStyle: "italic" },
-  { tag: t.strong, fontWeight: "700" },
   { tag: t.strikethrough, textDecoration: "line-through" },
   { tag: t.heading, color: "var(--text-normal)", fontWeight: "inherit" },
   { tag: t.monospace, color: "var(--text-normal)" },
@@ -423,6 +435,13 @@ function makeEditorState(doc: string): EditorState {
         { key: "Delete", run: (view) => deleteFencePair(view, true) },
         { key: "Enter", run: fenceEnter },
         { key: "Mod-a", run: selectCodeBlock },
+        {
+          key: "Shift-Mod-v",
+          run: () => {
+            void pasteFromClipboard(true);
+            return true;
+          },
+        },
       ])),
       livePreview({
         get docId() {
@@ -445,6 +464,7 @@ function makeEditorState(doc: string): EditorState {
       ]),
       EditorView.updateListener.of((update) => {
         if (update.docChanged && !loading) {
+          closeContextMenu();
           currentMarkdown = update.state.doc.toString();
           markDirty();
           queueCount();
@@ -527,7 +547,7 @@ function makeEditorState(doc: string): EditorState {
             flexWrap: "wrap",
             alignItems: "center",
             gap: "4px",
-            margin: "10px 14px",
+            margin: "2px 14px",
             padding: "6px 8px",
             backgroundColor: "var(--background-primary)",
             border: "1px solid var(--background-modifier-border)",
@@ -616,6 +636,19 @@ const searchPanels = new MutationObserver(() => {
 });
 searchPanels.observe(els.editor, { childList: true, subtree: true });
 
+// The find bar is a page field, so Edit > Paste has to stay available
+// even in reading mode: the page fills the field and drops the text when
+// no field has the focus.
+let searchOpen = false;
+const searchFocus = new MutationObserver(() => {
+  const open = document.querySelector("body > .cm-panels") !== null;
+  if (open === searchOpen) return;
+  searchOpen = open;
+  const focused = open || (!previewMode && !isReadOnly());
+  void bridge.call<void>(`${SERVICE}.SetFocused`, focused).catch(() => undefined);
+});
+searchFocus.observe(document.body, { childList: true });
+
 els.editor.addEventListener("click", (event) => {
   const target = event.target as HTMLElement | null;
   const link = target?.closest<HTMLElement>("[data-href]");
@@ -627,6 +660,7 @@ els.editor.addEventListener("click", (event) => {
 });
 
 els.editor.addEventListener("paste", handlePaste, true);
+document.addEventListener("contextmenu", openContextMenu);
 document.addEventListener("copy", copyMixedSelection, true);
 document.addEventListener(
   "cut",
@@ -878,6 +912,7 @@ function openDocument(payload: OpenPayload) {
   loading = true;
   closeSlash();
   closeBlockMenu();
+  closeContextMenu();
   closeSearchPanel(view);
   current = payload;
   previewMode = Boolean(payload.previewMode);
@@ -972,6 +1007,28 @@ function revealPosition(pos: number) {
     } else if (coords.bottom > rect.bottom - margin) {
       els.scroller.scrollTop += coords.bottom - (rect.bottom - margin);
     }
+  });
+}
+
+/** revealAtTop scrolls the page so pos sits near the top, which is where a
+ * jump from the outline should leave the heading it jumps to. */
+function revealAtTop(pos: number) {
+  const align = () => {
+    const rect = els.scroller.getBoundingClientRect();
+    const margin = 72;
+    const coords = view.coordsAtPos(pos);
+    if (coords) {
+      els.scroller.scrollTop += coords.top - (rect.top + margin);
+      return;
+    }
+    const block = view.lineBlockAt(pos);
+    els.scroller.scrollTop += view.documentTop + block.top - (rect.top + margin);
+  };
+  window.requestAnimationFrame(() => {
+    align();
+    // The page renders more of the note once it scrolls, which can move
+    // the heading; land once more after that layout pass.
+    window.requestAnimationFrame(align);
   });
 }
 
@@ -1340,6 +1397,265 @@ async function handlePaste(event: ClipboardEvent) {
       insertText(`[${selected}](${text.trim()})`);
     }
   }
+}
+
+/** pasteFromClipboard pastes through the app: the page's Paste menu and
+ * Shift+Cmd+V read the system clipboard, which the page's own APIs cannot.
+ * Rich text becomes Markdown as a native paste does; plain text goes in
+ * as it is. */
+async function pasteFromClipboard(plain: boolean): Promise<void> {
+  if (isReadOnly() || previewMode) return;
+  let clip: ClipboardResult;
+  try {
+    clip = await bridge.call<ClipboardResult>(`${SERVICE}.ReadClipboard`, plain);
+  } catch {
+    return;
+  }
+  if (!clip || clip.done) return;
+  if (!plain && clip.html.trim()) {
+    const markdown = turndown.turndown(clip.html).trim();
+    if (markdown) {
+      insertPastedMarkdown(markdown);
+      return;
+    }
+  }
+  if (!plain && clip.markdown.trim()) {
+    insertPastedMarkdown(clip.markdown.trim());
+    return;
+  }
+  if (!clip.text) return;
+  if (plain) {
+    insertText(clip.text);
+    return;
+  }
+  insertFormattedText(clip.text);
+}
+
+/** insertFormattedText pastes text the way Markdown reads it: a table
+ * gets the blank line that renders it, and a URL over a selection
+ * becomes a link. */
+function insertFormattedText(text: string): void {
+  if (isMarkdownTable(text)) {
+    insertText(text.trimEnd() + "\n", { block: true });
+    return;
+  }
+  const { from, to } = view.state.selection.main;
+  const selected = view.state.sliceDoc(from, to);
+  if (selected && /^https?:\/\/\S+$/.test(text.trim())) {
+    insertText(`[${selected}](${text.trim()})`);
+    return;
+  }
+  insertText(text);
+}
+
+/** menuIcon builds a stroked 24×24 icon, as the app's own menus draw. */
+function menuIcon(shapes: string): string {
+  return (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"' +
+    ' stroke="currentColor" stroke-width="1.8" stroke-linecap="round"' +
+    ` stroke-linejoin="round">${shapes}</svg>`
+  );
+}
+
+const menuIcons = {
+  cut: menuIcon('<circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/>'),
+  copy: menuIcon('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>'),
+  paste: menuIcon('<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/>'),
+  plain: menuIcon('<path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/>'),
+  selectAll: menuIcon('<path d="M5 3a2 2 0 0 0-2 2"/><path d="M19 3a2 2 0 0 1 2 2"/><path d="M21 19a2 2 0 0 1-2 2"/><path d="M5 21a2 2 0 0 1-2-2"/><path d="M9 3h1"/><path d="M9 21h1"/><path d="M14 3h1"/><path d="M14 21h1"/><path d="M3 9v1"/><path d="M21 9v1"/><path d="M3 14v1"/><path d="M21 14v1"/>'),
+  link: menuIcon('<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>'),
+  openLink: menuIcon('<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>'),
+};
+
+const isMac = bridge.platform !== "win32" && bridge.platform !== "linux";
+
+function commandShortcut(key: string): string {
+  return isMac ? `⌘${key}` : `Ctrl+${key}`;
+}
+
+function shiftCommandShortcut(key: string): string {
+  return isMac ? `⇧⌘${key}` : `Ctrl+Shift+${key}`;
+}
+
+/** openContextMenu shows the page's own menu over the document and its
+ * title, which the web view's system menu does not match. Text fields of
+ * the page keep the system menu, and nothing else shows one. The image
+ * widget keeps its own right click, which copies the picture. */
+function openContextMenu(event: MouseEvent) {
+  const target = event.target as HTMLElement | null;
+  if (!target) return;
+  if (target.closest("#title")) {
+    event.preventDefault();
+    closeSlash();
+    closeBlockMenu();
+    showContextMenu(event.clientX, event.clientY, titleMenuEntries());
+    return;
+  }
+  if (target.closest("#scroller")) {
+    event.preventDefault();
+    closeSlash();
+    closeBlockMenu();
+    let x = event.clientX;
+    let y = event.clientY;
+    // A right click moves the caret, as a native editor's does, unless it
+    // lands inside an existing selection. A menu the keyboard opened has
+    // no point of the page: it opens at the caret.
+    if (x === 0 && y === 0) {
+      const caret = view.coordsAtPos(view.state.selection.main.head);
+      if (caret) {
+        x = caret.left;
+        y = caret.bottom + 4;
+      }
+    } else {
+      const selection = view.state.selection.main;
+      const pos = view.posAtCoords({ x, y });
+      if (pos !== null && (pos < selection.from || pos > selection.to)) {
+        view.dispatch({ selection: { anchor: pos } });
+      }
+    }
+    showContextMenu(x, y, editorMenuEntries(target));
+    return;
+  }
+  // Fields of the page, the find bar most of all, keep the system menu.
+  if (target.closest("input, textarea")) return;
+  event.preventDefault();
+  closeContextMenu();
+}
+
+/** titleMenuEntries lists the title's right-click menu. The title is one
+ * line of plain text, so its paste keeps no formatting. */
+function titleMenuEntries(): ContextMenuEntry[] {
+  const readOnly = isReadOnly();
+  const selection = window.getSelection();
+  const hasSelection = Boolean(
+    selection && !selection.isCollapsed && selection.rangeCount > 0 &&
+    selection.anchorNode && selection.focusNode &&
+    els.title.contains(selection.anchorNode) && els.title.contains(selection.focusNode),
+  );
+  const entries: ContextMenuEntry[] = [];
+  if (!readOnly) {
+    entries.push({
+      label: "剪切",
+      icon: menuIcons.cut,
+      shortcut: commandShortcut("X"),
+      disabled: !hasSelection,
+      run: () => runTitleCommand("cut"),
+    });
+  }
+  entries.push({
+    label: "复制",
+    icon: menuIcons.copy,
+    shortcut: commandShortcut("C"),
+    disabled: !hasSelection,
+    run: () => runTitleCommand("copy"),
+  });
+  if (!readOnly) {
+    entries.push(SEPARATOR, {
+      label: "粘贴",
+      icon: menuIcons.paste,
+      shortcut: commandShortcut("V"),
+      run: () => void pasteIntoTitle(),
+    });
+  }
+  entries.push(SEPARATOR, {
+    label: "全选",
+    icon: menuIcons.selectAll,
+    shortcut: commandShortcut("A"),
+    run: () => selectTitleText(),
+  });
+  return entries;
+}
+
+/** pasteIntoTitle inserts the clipboard's text in the title, on one line. */
+async function pasteIntoTitle(): Promise<void> {
+  let clip: ClipboardResult;
+  try {
+    clip = await bridge.call<ClipboardResult>(`${SERVICE}.ReadClipboard`, true);
+  } catch {
+    return;
+  }
+  if (!clip || clip.done) return;
+  const text = clip.text.replace(/\r?\n/g, " ");
+  if (!text) return;
+  els.title.focus();
+  document.execCommand("insertText", false, text);
+}
+
+function runTitleCommand(command: "cut" | "copy"): void {
+  els.title.focus();
+  document.execCommand(command);
+}
+
+function selectTitleText(): void {
+  const range = document.createRange();
+  range.selectNodeContents(els.title);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  els.title.focus();
+}
+
+/** editorMenuEntries lists what the document's right-click menu offers. */
+function editorMenuEntries(target: HTMLElement): ContextMenuEntry[] {
+  const selection = view.state.selection.main;
+  const hasSelection = !selection.empty;
+  const readOnly = isReadOnly();
+  const link = target.closest<HTMLElement>("[data-href]")?.dataset.href ?? "";
+  const entries: ContextMenuEntry[] = [];
+  if (link) {
+    entries.push({ label: "打开链接", icon: menuIcons.openLink, run: () => openLink(link) });
+    entries.push({ label: "复制链接地址", icon: menuIcons.link, run: () => copyText(link) });
+    entries.push(SEPARATOR);
+  }
+  if (!readOnly) {
+    entries.push({
+      label: "剪切",
+      icon: menuIcons.cut,
+      shortcut: commandShortcut("X"),
+      disabled: !hasSelection,
+      run: () => runEditorCommand("cut"),
+    });
+  }
+  entries.push({
+    label: "复制",
+    icon: menuIcons.copy,
+    shortcut: commandShortcut("C"),
+    disabled: !hasSelection,
+    run: () => runEditorCommand("copy"),
+  });
+  if (!readOnly) {
+    entries.push(SEPARATOR);
+    entries.push({
+      label: "粘贴",
+      icon: menuIcons.paste,
+      shortcut: commandShortcut("V"),
+      run: () => void pasteFromClipboard(false),
+    });
+    entries.push({
+      label: "粘贴为纯文本",
+      icon: menuIcons.plain,
+      shortcut: shiftCommandShortcut("V"),
+      run: () => void pasteFromClipboard(true),
+    });
+  }
+  entries.push(SEPARATOR);
+  entries.push({
+    label: "全选",
+    icon: menuIcons.selectAll,
+    shortcut: commandShortcut("A"),
+    run: () => {
+      const end = view.state.doc.length;
+      view.dispatch({ selection: { anchor: 0, head: end } });
+      view.focus();
+    },
+  });
+  return entries;
+}
+
+/** runEditorCommand runs the web view's own cut or copy on the selection. */
+function runEditorCommand(command: "cut" | "copy") {
+  view.focus();
+  document.execCommand(command);
 }
 
 /** isMarkdownTable reports text that is one complete pipe table. */
@@ -1754,7 +2070,7 @@ function renderOutline() {
     item.addEventListener("click", () => {
       const line = view.state.doc.line(Math.min(heading.line + 1, view.state.doc.lines));
       view.dispatch({ selection: { anchor: line.from } });
-      revealPosition(line.from);
+      revealAtTop(line.from);
       view.focus();
     });
     els.outlineList.appendChild(item);
@@ -2077,8 +2393,22 @@ bridge.on(EVENT_COMMAND, (payload) => {
   handleCommand(payload as CommandPayload);
 });
 bridge.on(EVENT_INSERT, (payload) => {
-  const text = (payload as TextPayload).text;
-  if (text) insertText(text);
+  const insert = payload as TextPayload;
+  if (!insert.text) return;
+  // The find bar and other page fields are inputs inside the web page, so
+  // Edit > Paste arrives here too; fill the field with the plain text
+  // instead of pasting Markdown into the note.
+  const field = document.activeElement;
+  if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
+    const text = insert.plain || insert.text;
+    const start = field.selectionStart ?? field.value.length;
+    const end = field.selectionEnd ?? start;
+    field.setRangeText(text, start, end, "end");
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    return;
+  }
+  if (previewMode || isReadOnly()) return;
+  insertText(insert.text);
 });
 bridge.on(EVENT_TITLE, (payload) => {
   const meta = payload as { id?: string; title: string };
@@ -2154,7 +2484,7 @@ flowchart LR
 
 | 名称 | 说明 |
 | --- | --- |
-| 语燕 | 本地优先 |
+| Swift | 本地优先 |
 | Obsidian | 知识库 |
 
 ---
@@ -2194,6 +2524,14 @@ flowchart LR
       if (method === `${SERVICE}.CopyText`) {
         await navigator.clipboard.writeText(String(args[0] ?? ""));
         return undefined as T;
+      }
+      if (method === `${SERVICE}.ReadClipboard`) {
+        return {
+          html: args[0] === true ? "" : '<p><strong>来自网页的加粗</strong>和<a href="https://example.com">链接</a></p>',
+          markdown: "",
+          text: "来自网页的加粗和链接",
+          done: false,
+        } as T;
       }
       return undefined as T;
     },

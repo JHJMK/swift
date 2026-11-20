@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/transfer"
+	"github.com/egoist/mygo/ui/richtext"
 )
 
 func TestPasteImageAddsAsset(t *testing.T) {
@@ -91,5 +93,39 @@ func TestPasteMenuOffWhileModalOpen(t *testing.T) {
 	a.syncPasteItem()
 	if a.pasteItem.IsEnabled() {
 		t.Fatal("paste enabled in preview mode")
+	}
+}
+
+func TestWebClipboardPayloadKeepsEveryForm(t *testing.T) {
+	data := transfer.New(transfer.NewItem(
+		transfer.Bytes(transfer.HTML, []byte("<p><strong>加粗</strong></p>")),
+		transfer.Bytes(transfer.Markdown, []byte("**加粗**")),
+		transfer.Bytes(transfer.Text, []byte("加粗")),
+	))
+	got := webClipboardPayload(data)
+	if got.HTML != "<p><strong>加粗</strong></p>" || got.Markdown != "**加粗**" || got.Text != "加粗" {
+		t.Fatalf("payload = %+v", got)
+	}
+}
+
+func TestWebClipboardPayloadTurnsRTFIntoMarkdown(t *testing.T) {
+	rtf := []byte(`{\rtf1\ansi\deff0{\fonttbl{\f0 Helvetica;}}\f0\fs24 plain \b bold\b0}`)
+	data := transfer.New(transfer.NewItem(
+		transfer.Bytes(richtext.RTF, rtf),
+		transfer.Bytes(transfer.Text, []byte("plain bold")),
+	))
+	got := webClipboardPayload(data)
+	if !strings.Contains(got.Markdown, "**bold**") {
+		t.Fatalf("markdown = %q", got.Markdown)
+	}
+	if got.Text != "plain bold" {
+		t.Fatalf("text = %q", got.Text)
+	}
+}
+
+func TestWebClipboardPayloadOfPlainText(t *testing.T) {
+	got := webClipboardPayload(transfer.TextData("纯文本\n第二行"))
+	if got.HTML != "" || got.Markdown != "" || got.Text != "纯文本\n第二行" {
+		t.Fatalf("payload = %+v", got)
 	}
 }

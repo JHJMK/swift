@@ -27,13 +27,13 @@ func startDiagnostics() *diagnosticLogger {
 	return diagnostics
 }
 
-// Run starts 语燕 and stays until it quits.
+// Run starts Swift and stays until it quits.
 func Run() {
 	diagnostics := startDiagnostics()
 	if diagnostics != nil {
 		defer diagnostics.Close()
 	}
-	// 语燕 is light throughout: on a dark desktop its window chrome stays
+	// Swift is light throughout: on a dark desktop its window chrome stays
 	// light too, as its pages are.
 	mygo.Theme.SetSource(mygo.ThemeLight)
 	a := newApp()
@@ -125,7 +125,7 @@ func Run() {
 		}))
 
 		a.win = mygo.NewWindow(mygo.WindowOptions{
-			Title:    "语燕",
+			Title:    "Swift",
 			Width:    1180,
 			Height:   760,
 			MinWidth: 860, MinHeight: 520,

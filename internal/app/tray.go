@@ -11,7 +11,7 @@ import (
 	"github.com/egoist/mygo"
 )
 
-// setupTray adds the menu bar or notification area icon that keeps 语燕
+// setupTray adds the menu bar or notification area icon that keeps Swift
 // reachable after its window is closed. Closing the window hides it; the
 // tray menu is where the app quits for good.
 func (a *app) setupTray() {
@@ -19,11 +19,11 @@ func (a *app) setupTray() {
 		return
 	}
 	menu := mygo.NewMenu([]*mygo.MenuItem{
-		{Label: "显示语燕", Click: func(*mygo.MenuItem, *mygo.Window) {
+		{Label: "显示 Swift", Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.showFromBackground()
 		}},
 		mygo.Separator(),
-		{Label: "退出语燕", Click: func(*mygo.MenuItem, *mygo.Window) {
+		{Label: "退出 Swift", Click: func(*mygo.MenuItem, *mygo.Window) {
 			mygo.App.Quit()
 		}},
 	})
@@ -31,7 +31,7 @@ func (a *app) setupTray() {
 		ID:             "main",
 		Icon:           trayIcon(),
 		IconIsTemplate: true,
-		ToolTip:        "语燕",
+		ToolTip:        "Swift",
 		Menu:           menu,
 	})
 	if err != nil {

@@ -66,7 +66,7 @@ func (a *app) syncSettingsSection(c *ui.Context) {
 		}
 
 		if !s.Enabled {
-			ui.Text(c, "打开后，语燕会把知识库里的 Markdown、图片和附件镜像到远端。").
+			ui.Text(c, "打开后，Swift 会把知识库里的 Markdown、图片和附件镜像到远端。").
 				FontSize(12).TextColor(t.TextMuted)
 			return
 		}

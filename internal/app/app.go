@@ -1853,15 +1853,26 @@ func (a *app) pinDoc(n *Node) {
 	a.moveNode(n.Rel, parent, before)
 }
 
-// copyNodeLink copies a file link to the node, as 语雀 copies a document's
-// link.
-func (a *app) copyNodeLink(rel string) {
+// nodePath is a node's absolute path, for the row menu's copy action.
+func (a *app) nodePath(rel string) (string, bool) {
+	if a.vault == nil {
+		return "", false
+	}
 	p, err := a.vault.Abs(rel)
 	if err != nil {
+		return "", false
+	}
+	return p, true
+}
+
+// copyNodePath puts a document's absolute path on the clipboard.
+func (a *app) copyNodePath(rel string) {
+	p, ok := a.nodePath(rel)
+	if !ok {
 		return
 	}
-	u := url.URL{Scheme: "file", Path: p}
-	mygo.Clipboard.WriteText(u.String())
+	mygo.Clipboard.WriteText(p)
+	a.flashToast("路径已复制")
 }
 
 func (a *app) refreshTrash() {
@@ -1897,9 +1908,9 @@ func (a *app) runSearch() {
 func (a *app) chooseWorkspace() {
 	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
 		Parent:            a.win,
-		Title:             "选择语燕的文档目录",
+		Title:             "选择 Swift 的文档目录",
 		ButtonLabel:       "选择",
-		Message:           "语燕会把知识库和 Markdown 文档保存在这个目录中。",
+		Message:           "Swift 会把知识库和 Markdown 文档保存在这个目录中。",
 		Directory:         true,
 		CreateDirectories: true,
 	})

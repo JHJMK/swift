@@ -14,6 +14,14 @@ import {
 import { cachedMermaidSvg } from "./mermaid";
 import { renumberOrderedFrom } from "./lists";
 import {
+  delimiterRole,
+  escapeMask,
+  findEmphasisClose,
+  findRun,
+  findUnescaped,
+  isEscapable,
+} from "./inline";
+import {
   CodeFlairWidget,
   HrWidget,
   ImageWidget,
@@ -52,7 +60,10 @@ export function attachView(view: EditorView) {
   viewRef = view;
 }
 
-const hiddenMark = Decoration.mark({ class: "swift-token-hidden" });
+// Replaced (not display:none) so every position keeps real screen
+// coordinates; without them drawSelection paints giant stray rectangles
+// when a drag momentarily ends inside a hidden marker.
+const hiddenMark = Decoration.replace({});
 
 function lineActive(active: Set<number>, n: number): boolean {
   return active.has(n);
@@ -157,21 +168,49 @@ function build(
   };
 
   /** inline decorates emphasis, code, links and images within one line. */
-  const inline = (base: number, text: string, isActive: boolean, fromOffset = 0, toOffset = text.length) => {
+  const inline = (
+    base: number,
+    text: string,
+    isActive: boolean,
+    fromOffset = 0,
+    toOffset = text.length,
+    escaped = escapeMask(text),
+  ) => {
     let i = fromOffset;
     const n = toOffset;
     const lower = text.toLowerCase();
+    const findClose = (start: number, mark: string, run: number) =>
+      findEmphasisClose(text, mark, start, n, run, escaped);
     while (i < n) {
       const ch = text[i];
+      if (ch === "\\" && i + 1 < n && isEscapable(text[i + 1])) {
+        // The backslash only marks the escape, so the line reads without
+        // it; the character it protects stays literal text.
+        if (!isActive) hide(base + i, base + i + 1);
+        else style(base + i, base + i + 1, "swift-formatting");
+        i += 2;
+        continue;
+      }
       if (ch === "`") {
-        const end = text.indexOf("`", i + 1);
-        if (end > i) {
-          if (!isActive) hide(base + i, base + end + 1);
-          else style(base + i, base + i + 1, "swift-formatting"), style(base + end, base + end + 1, "swift-formatting");
-          style(base + i + 1, base + end, "swift-inline-code");
-          i = end + 1;
+        // A code span closes on a run of backticks as long as its own,
+        // so ``a ` b`` keeps the single backtick inside.
+        let run = 1;
+        while (i + run < n && text[i + run] === "`") run++;
+        const end = findRun(text, "`", i + run, n, run);
+        if (end >= 0) {
+          if (!isActive) {
+            hide(base + i, base + i + run);
+            hide(base + end, base + end + run);
+          } else {
+            style(base + i, base + i + run, "swift-formatting");
+            style(base + end, base + end + run, "swift-formatting");
+          }
+          style(base + i + run, base + end, "swift-inline-code");
+          i = end + run;
           continue;
         }
+        i += run;
+        continue;
       }
       if (ch === "!" && text[i + 1] === "[" && text[i + 2] === "[") {
         const end = text.indexOf("]]", i + 3);
@@ -338,10 +377,29 @@ function build(
           }
         }
       }
-      if (text.startsWith("**", i) || text.startsWith("__", i)) {
-        const mark = text.slice(i, i + 2);
-        const end = text.indexOf(mark, i + 2);
-        if (end > i) {
+      if (text.startsWith("***", i) &&
+          !escaped[i] && !escaped[i + 1] && !escaped[i + 2] &&
+          delimiterRole(text, i).open) {
+        const mark = text[i];
+        const end = findClose(i + 3, mark, 3);
+        if (end > i + 3) {
+          if (!isActive) {
+            hide(base + i, base + i + 3);
+            hide(base + end, base + end + 3);
+          } else {
+            style(base + i, base + i + 3, "swift-formatting");
+            style(base + end, base + end + 3, "swift-formatting");
+          }
+          style(base + i + 3, base + end, "swift-strong swift-em");
+          inline(base, text, isActive, i + 3, end, escaped);
+          i = end + 3;
+          continue;
+        }
+      }
+      if (text.startsWith("**", i) && !escaped[i] && !escaped[i + 1]) {
+        const mark = text[i];
+        const end = delimiterRole(text, i).open ? findClose(i + 2, mark, 2) : -1;
+        if (end > i + 2) {
           if (!isActive) {
             hide(base + i, base + i + 2);
             hide(base + end, base + end + 2);
@@ -350,14 +408,14 @@ function build(
             style(base + end, base + end + 2, "swift-formatting");
           }
           style(base + i + 2, base + end, "swift-strong");
-          inline(base, text, isActive, i + 2, end);
+          inline(base, text, isActive, i + 2, end, escaped);
           i = end + 2;
           continue;
         }
       }
-      if (text.startsWith("~~", i)) {
-        const end = text.indexOf("~~", i + 2);
-        if (end > i) {
+      if (text.startsWith("~~", i) && !escaped[i] && !escaped[i + 1]) {
+        const end = findUnescaped(text, "~", i + 2, n, 2, escaped);
+        if (end > i + 2) {
           if (!isActive) {
             hide(base + i, base + i + 2);
             hide(base + end, base + end + 2);
@@ -366,14 +424,14 @@ function build(
             style(base + end, base + end + 2, "swift-formatting");
           }
           style(base + i + 2, base + end, "swift-strike");
-          inline(base, text, isActive, i + 2, end);
+          inline(base, text, isActive, i + 2, end, escaped);
           i = end + 2;
           continue;
         }
       }
-      if (text.startsWith("==", i)) {
-        const end = text.indexOf("==", i + 2);
-        if (end > i) {
+      if (text.startsWith("==", i) && !escaped[i] && !escaped[i + 1]) {
+        const end = findUnescaped(text, "=", i + 2, n, 2, escaped);
+        if (end > i + 2) {
           if (!isActive) {
             hide(base + i, base + i + 2);
             hide(base + end, base + end + 2);
@@ -382,14 +440,14 @@ function build(
             style(base + end, base + end + 2, "swift-formatting");
           }
           style(base + i + 2, base + end, "swift-highlight");
-          inline(base, text, isActive, i + 2, end);
+          inline(base, text, isActive, i + 2, end, escaped);
           i = end + 2;
           continue;
         }
       }
-      if (ch === "*" || ch === "_") {
-        const end = text.indexOf(ch, i + 1);
-        if (end > i + 1 && !text.startsWith(ch + ch, i)) {
+      if (ch === "*" && !escaped[i] && delimiterRole(text, i).open) {
+        const end = findClose(i + 1, ch, 1);
+        if (end > i + 1) {
           if (!isActive) {
             hide(base + i, base + i + 1);
             hide(base + end, base + end + 1);
@@ -398,7 +456,7 @@ function build(
             style(base + end, base + end + 1, "swift-formatting");
           }
           style(base + i + 1, base + end, "swift-em");
-          inline(base, text, isActive, i + 1, end);
+          inline(base, text, isActive, i + 1, end, escaped);
           i = end + 1;
           continue;
         }

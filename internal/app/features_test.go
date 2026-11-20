@@ -1,6 +1,7 @@
 package app
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -242,5 +243,24 @@ func TestQuickNoteSaveUnderDocument(t *testing.T) {
 	}
 	if a.findNode(want) == nil {
 		t.Fatalf("saved child missing under the document: %+v", a.findNode(parent))
+	}
+}
+
+// A document row can put its absolute path on the clipboard.
+func TestNodePathIsAbsolute(t *testing.T) {
+	a, root, rel := newTestApp(t)
+	got, ok := a.nodePath(rel)
+	if !ok {
+		t.Fatal("node path not resolved")
+	}
+	if !filepath.IsAbs(got) {
+		t.Fatalf("path is relative: %q", got)
+	}
+	want := filepath.Join(root, filepath.FromSlash(rel))
+	if got != want {
+		t.Fatalf("path = %q, want %q", got, want)
+	}
+	if _, ok := a.nodePath("../outside.md"); ok {
+		t.Fatal("path outside the vault resolved")
 	}
 }

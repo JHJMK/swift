@@ -18,7 +18,7 @@ func TestSidebarCollapse(t *testing.T) {
 	if !a.sidebarCollapsed {
 		t.Fatal("the sidebar did not collapse")
 	}
-	if tt.HasText("语燕") {
+	if tt.HasText("Swift") {
 		t.Fatalf("the expanded brand stayed: %q", tt.Texts())
 	}
 	if err := tt.Click("展开侧栏"); err != nil {
@@ -28,7 +28,7 @@ func TestSidebarCollapse(t *testing.T) {
 	if a.sidebarCollapsed {
 		t.Fatal("the sidebar did not open")
 	}
-	if !tt.HasText("语燕") {
+	if !tt.HasText("Swift") {
 		t.Fatalf("the brand did not return: %q", tt.Texts())
 	}
 }

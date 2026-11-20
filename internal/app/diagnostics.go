@@ -258,7 +258,7 @@ func (a *app) exportDiagnosticLogs(dst string) error {
 }
 
 func (a *app) askExportDiagnosticLogs() {
-	name := "语燕日志-" + time.Now().Format("2006-01-02") + ".zip"
+	name := "Swift 日志-" + time.Now().Format("2006-01-02") + ".zip"
 	defaultPath := name
 	if dir, err := mygo.App.Path(mygo.PathDownloads); err == nil {
 		defaultPath = filepath.Join(dir, name)
