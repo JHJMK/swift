@@ -21,6 +21,12 @@ func (a *app) pasteFromMenu() {
 		return
 	}
 	if a.isWebDoc() {
+		// Reading mode has no editable text, but its find bar is a page
+		// field: send the text and let the page fill the field or drop it.
+		if a.doc.ReadOnly || a.previewMode {
+			a.pasteTextIntoWeb()
+			return
+		}
 		a.pasteFromMenuWeb()
 		return
 	}
@@ -51,6 +57,20 @@ func (a *app) pasteFromMenu() {
 	}
 }
 
+// pasteTextIntoWeb sends only the clipboard's text to the page, which
+// fills a focused field such as the find bar.
+func (a *app) pasteTextIntoWeb() {
+	data, err := mygo.Clipboard.Read(transfer.Text)
+	if err != nil {
+		return
+	}
+	b, err := data.Read(transfer.Text)
+	if err != nil || len(b) == 0 {
+		return
+	}
+	a.sendWebInsertText(string(b), string(b))
+}
+
 // pasteFromMenuWeb pastes into the page: pictures become assets, rich
 // text becomes Markdown.
 func (a *app) pasteFromMenuWeb() {
@@ -71,26 +91,27 @@ func (a *app) pasteFromMenuWeb() {
 	if err != nil {
 		return
 	}
+	plain, _ := data.Read(transfer.Text)
 	if b, err := data.Read(transfer.HTML); err == nil && len(b) > 0 {
 		md := richtext.ParseHTML(string(b)).Markdown()
 		if strings.TrimSpace(md) != "" {
-			a.sendWebInsert(md)
+			a.sendWebInsertText(md, string(plain))
 			return
 		}
 	}
 	if b, err := data.Read(richtext.RTF); err == nil && len(b) > 0 {
 		md := richtext.ParseRTF(b).Markdown()
 		if strings.TrimSpace(md) != "" {
-			a.sendWebInsert(md)
+			a.sendWebInsertText(md, string(plain))
 			return
 		}
 	}
 	if b, err := data.Read(transfer.Markdown); err == nil && len(b) > 0 {
-		a.sendWebInsert(string(b))
+		a.sendWebInsertText(string(b), string(plain))
 		return
 	}
 	if b, err := data.Read(transfer.Text); err == nil && len(b) > 0 {
-		a.sendWebInsert(string(b))
+		a.sendWebInsertText(string(b), string(b))
 	}
 }
 
@@ -230,7 +251,14 @@ func (a *app) setEditorFocused(focused bool) {
 // text field of its own, so the item must be off then: a macOS menu
 // handles Cmd+V before the focused field does.
 func (a *app) pasteIntoEditor() bool {
-	if !a.editorFocused || a.doc == nil || a.doc.ReadOnly || a.previewMode {
+	if !a.editorFocused || a.doc == nil {
+		return false
+	}
+	if a.isWebDoc() && (a.doc.ReadOnly || a.previewMode) {
+		// Only the page's fields, such as the find bar, can take text.
+		return true
+	}
+	if a.doc.ReadOnly || a.previewMode {
 		return false
 	}
 	return !a.modalOpen()

@@ -158,6 +158,13 @@ const turndown = new TurndownService({
   emDelimiter: "*",
   strongDelimiter: "**",
 });
+// Turndown escapes `_` because CommonMark reads it as emphasis. This
+// editor does not, so a pasted name such as
+// `lake_autovacuum_stale_partition_threshold` would otherwise enter the
+// note as `lake\_autovacuum\_...`, and the backslashes come back out
+// whenever the text is copied again.
+const escapeMarkdown = turndown.escape.bind(turndown);
+turndown.escape = (text: string) => escapeMarkdown(text).replace(/\\_/g, "_");
 turndown.addRule("strikethrough", {
   filter: ["del", "s"],
   replacement: (content) => `~~${content}~~`,
@@ -373,8 +380,6 @@ const obsidianHighlightStyle = HighlightStyle.define([
   { tag: [t.tagName, t.angleBracket], color: "#c41f36" },
   { tag: t.link, color: "#6d3fd4", textDecoration: "underline" },
   { tag: t.url, color: "#6d3fd4" },
-  { tag: t.emphasis, fontStyle: "italic" },
-  { tag: t.strong, fontWeight: "700" },
   { tag: t.strikethrough, textDecoration: "line-through" },
   { tag: t.heading, color: "var(--text-normal)", fontWeight: "inherit" },
   { tag: t.monospace, color: "var(--text-normal)" },
@@ -542,7 +547,7 @@ function makeEditorState(doc: string): EditorState {
             flexWrap: "wrap",
             alignItems: "center",
             gap: "4px",
-            margin: "10px 14px",
+            margin: "2px 14px",
             padding: "6px 8px",
             backgroundColor: "var(--background-primary)",
             border: "1px solid var(--background-modifier-border)",
@@ -630,6 +635,19 @@ const searchPanels = new MutationObserver(() => {
   panels.querySelector<HTMLInputElement>('input[name="search"]')?.focus();
 });
 searchPanels.observe(els.editor, { childList: true, subtree: true });
+
+// The find bar is a page field, so Edit > Paste has to stay available
+// even in reading mode: the page fills the field and drops the text when
+// no field has the focus.
+let searchOpen = false;
+const searchFocus = new MutationObserver(() => {
+  const open = document.querySelector("body > .cm-panels") !== null;
+  if (open === searchOpen) return;
+  searchOpen = open;
+  const focused = open || (!previewMode && !isReadOnly());
+  void bridge.call<void>(`${SERVICE}.SetFocused`, focused).catch(() => undefined);
+});
+searchFocus.observe(document.body, { childList: true });
 
 els.editor.addEventListener("click", (event) => {
   const target = event.target as HTMLElement | null;
@@ -989,6 +1007,28 @@ function revealPosition(pos: number) {
     } else if (coords.bottom > rect.bottom - margin) {
       els.scroller.scrollTop += coords.bottom - (rect.bottom - margin);
     }
+  });
+}
+
+/** revealAtTop scrolls the page so pos sits near the top, which is where a
+ * jump from the outline should leave the heading it jumps to. */
+function revealAtTop(pos: number) {
+  const align = () => {
+    const rect = els.scroller.getBoundingClientRect();
+    const margin = 72;
+    const coords = view.coordsAtPos(pos);
+    if (coords) {
+      els.scroller.scrollTop += coords.top - (rect.top + margin);
+      return;
+    }
+    const block = view.lineBlockAt(pos);
+    els.scroller.scrollTop += view.documentTop + block.top - (rect.top + margin);
+  };
+  window.requestAnimationFrame(() => {
+    align();
+    // The page renders more of the note once it scrolls, which can move
+    // the heading; land once more after that layout pass.
+    window.requestAnimationFrame(align);
   });
 }
 
@@ -2030,7 +2070,7 @@ function renderOutline() {
     item.addEventListener("click", () => {
       const line = view.state.doc.line(Math.min(heading.line + 1, view.state.doc.lines));
       view.dispatch({ selection: { anchor: line.from } });
-      revealPosition(line.from);
+      revealAtTop(line.from);
       view.focus();
     });
     els.outlineList.appendChild(item);
@@ -2353,8 +2393,22 @@ bridge.on(EVENT_COMMAND, (payload) => {
   handleCommand(payload as CommandPayload);
 });
 bridge.on(EVENT_INSERT, (payload) => {
-  const text = (payload as TextPayload).text;
-  if (text) insertText(text);
+  const insert = payload as TextPayload;
+  if (!insert.text) return;
+  // The find bar and other page fields are inputs inside the web page, so
+  // Edit > Paste arrives here too; fill the field with the plain text
+  // instead of pasting Markdown into the note.
+  const field = document.activeElement;
+  if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
+    const text = insert.plain || insert.text;
+    const start = field.selectionStart ?? field.value.length;
+    const end = field.selectionEnd ?? start;
+    field.setRangeText(text, start, end, "end");
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    return;
+  }
+  if (previewMode || isReadOnly()) return;
+  insertText(insert.text);
 });
 bridge.on(EVENT_TITLE, (payload) => {
   const meta = payload as { id?: string; title: string };
@@ -2430,7 +2484,7 @@ flowchart LR
 
 | 名称 | 说明 |
 | --- | --- |
-| 语燕 | 本地优先 |
+| Swift | 本地优先 |
 | Obsidian | 知识库 |
 
 ---

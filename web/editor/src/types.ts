@@ -66,6 +66,8 @@ export interface RenamePayload {
 
 export interface TextPayload {
   text: string;
+  /** Plain form, used when the target is a page field rather than the note. */
+  plain?: string;
 }
 
 export interface RenameResult {

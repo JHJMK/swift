@@ -1,9 +1,9 @@
 /** inline.ts decides where the inline Markdown of one line begins and ends.
  * A backslash escapes ASCII punctuation, and emphasis runs only pair when
- * they are flanking; `_` never pairs inside a word, which keeps
- * `lake_autovacuum_parallel_partitions` plain text. */
+ * they are flanking. Only `*` delimits emphasis: notes are full of
+ * identifiers like `lake_autovacuum_stale_partition_threshold`, so `_` is
+ * always plain text and never needs escaping. */
 
-const PUNCTUATION = /[\p{P}\p{S}]/u;
 const SPACE = /\s/;
 const ESCAPABLE = /^[!-/:-@[-`{-~]$/;
 const NO_ESCAPES = new Uint8Array(0);
@@ -32,29 +32,24 @@ export function escapeMask(text: string): Uint8Array {
 /** delimiterRole reports whether the delimiter run at index can open or
  * close emphasis.
  *
- * Underscore follows CommonMark: a run is left flanking when the text
- * after it is not a space, right flanking when the text before it is not,
- * and `_` needs punctuation on the word side, so `lake_autovacuum` stays
- * one word. Asterisks only stop at spaces, because Chinese notes write
+ * Only `*` delimits emphasis, so underscores in identifiers stay plain
+ * text. A run stops at spaces, because Chinese notes write
  * `**注意：**后面` and expect the label in bold. */
 export function delimiterRole(
   text: string,
   index: number,
 ): { open: boolean; close: boolean } {
+  if (text[index] !== "*") return { open: false, close: false };
   const before = index > 0 ? text[index - 1] : "";
   // The delimiters of one run act together, so the character after the
   // whole run decides the role.
   let after = index + 1;
-  while (after < text.length && text[after] === text[index]) after++;
+  while (after < text.length && text[after] === "*") after++;
   const next = after < text.length ? text[after] : "";
-  const spaceBefore = before === "" || SPACE.test(before);
-  const spaceAfter = next === "" || SPACE.test(next);
-  if (text[index] !== "_") return { open: !spaceAfter, close: !spaceBefore };
-  const punctBefore = before !== "" && PUNCTUATION.test(before);
-  const punctAfter = next !== "" && PUNCTUATION.test(next);
-  const left = !spaceAfter && (!punctAfter || spaceBefore || punctBefore);
-  const right = !spaceBefore && (!punctBefore || spaceAfter || punctAfter);
-  return { open: left && (!right || punctBefore), close: right && (!left || punctAfter) };
+  return {
+    open: !(next === "" || SPACE.test(next)),
+    close: !(before === "" || SPACE.test(before)),
+  };
 }
 
 /** findRun returns where the first run of at least run mark characters

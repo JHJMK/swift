@@ -40,14 +40,13 @@ test("asterisks still emphasize inside a word", () => {
   assert.equal(findEmphasisClose(line, "*", 2, line.length, 1, escaped), 3);
 });
 
-test("underscore emphasis around a word keeps working", () => {
+test("underscores never delimit emphasis, even around a word", () => {
   const line = "_斜体_ and __加粗__";
-  const escaped = escapeMask(line);
-  assert.equal(delimiterRole(line, 0).open, true);
-  assert.equal(findEmphasisClose(line, "_", 1, line.length, 1, escaped), 3);
-  const strong = line.indexOf("__");
-  assert.equal(delimiterRole(line, strong).open, true);
-  assert.equal(findEmphasisClose(line, "_", strong + 2, line.length, 2, escaped), line.lastIndexOf("__"));
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] !== "_") continue;
+    assert.equal(delimiterRole(line, i).open, false);
+    assert.equal(delimiterRole(line, i).close, false);
+  }
 });
 
 test("asterisk emphasis survives Chinese punctuation, as in **注意：**后面", () => {
@@ -73,12 +72,12 @@ test("a delimiter run cannot open or close next to a space", () => {
   assert.equal(findEmphasisClose(close, "*", 1, close.length, 1, escaped), -1);
 });
 
-test("an escaped backslash leaves the next underscore free", () => {
-  const line = "\\\\_x_";
+test("an escaped backslash leaves the next delimiter free", () => {
+  const line = "\\\\*x*";
   const escaped = escapeMask(line);
   assert.equal(escaped[1], 1);
   assert.equal(escaped[2], 0);
-  assert.equal(findEmphasisClose(line, "_", 3, line.length, 1, escaped), 4);
+  assert.equal(findEmphasisClose(line, "*", 3, line.length, 1, escaped), 4);
 });
 
 test("a code span closes on a run as long as its own", () => {

@@ -60,7 +60,10 @@ export function attachView(view: EditorView) {
   viewRef = view;
 }
 
-const hiddenMark = Decoration.mark({ class: "swift-token-hidden" });
+// Replaced (not display:none) so every position keeps real screen
+// coordinates; without them drawSelection paints giant stray rectangles
+// when a drag momentarily ends inside a hidden marker.
+const hiddenMark = Decoration.replace({});
 
 function lineActive(active: Set<number>, n: number): boolean {
   return active.has(n);
@@ -374,7 +377,7 @@ function build(
           }
         }
       }
-      if ((text.startsWith("***", i) || text.startsWith("___", i)) &&
+      if (text.startsWith("***", i) &&
           !escaped[i] && !escaped[i + 1] && !escaped[i + 2] &&
           delimiterRole(text, i).open) {
         const mark = text[i];
@@ -393,7 +396,7 @@ function build(
           continue;
         }
       }
-      if ((text.startsWith("**", i) || text.startsWith("__", i)) && !escaped[i] && !escaped[i + 1]) {
+      if (text.startsWith("**", i) && !escaped[i] && !escaped[i + 1]) {
         const mark = text[i];
         const end = delimiterRole(text, i).open ? findClose(i + 2, mark, 2) : -1;
         if (end > i + 2) {
@@ -442,7 +445,7 @@ function build(
           continue;
         }
       }
-      if ((ch === "*" || ch === "_") && !escaped[i] && delimiterRole(text, i).open) {
+      if (ch === "*" && !escaped[i] && delimiterRole(text, i).open) {
         const end = findClose(i + 1, ch, 1);
         if (end > i + 1) {
           if (!isActive) {

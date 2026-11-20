@@ -409,13 +409,16 @@ func TestDocumentRowMenu(t *testing.T) {
 	if a.rowMenu != rel {
 		t.Fatalf("row menu not open: %q", a.rowMenu)
 	}
-	for _, want := range []string{"重命名", "复制链接", "置顶文档", "导出 Markdown（含图片）", "导出为 PDF", "在 Finder 中显示", "删除"} {
+	for _, want := range []string{"重命名", "复制文档路径", "置顶文档", "导出 Markdown", "导出为 PDF", "在 Finder 中显示", "删除"} {
 		if !tt.HasText(want) {
 			t.Fatalf("document menu lacks %q", want)
 		}
 	}
 	if tt.HasText("新建目录") {
 		t.Fatal("document menu has a folder action")
+	}
+	if tt.HasText("复制链接") {
+		t.Fatal("document menu still offers the link copy")
 	}
 	if err := tt.Click("重命名"); err != nil {
 		t.Fatal(err)
@@ -462,7 +465,7 @@ func TestFolderRowMenu(t *testing.T) {
 			t.Fatalf("folder menu lacks %q", want)
 		}
 	}
-	for _, unwanted := range []string{"复制链接", "置顶文档", "移出目录"} {
+	for _, unwanted := range []string{"复制文档路径", "置顶文档", "移出目录"} {
 		if tt.HasText(unwanted) {
 			t.Fatalf("folder menu has %q", unwanted)
 		}

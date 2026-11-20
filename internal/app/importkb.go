@@ -226,7 +226,7 @@ func (a *app) rewriteImportedMarkdown(md, srcPath, docRel string) (string, int) 
 func (a *app) askRemoveExternal(name string) {
 	a.confirm = &confirmState{
 		Title:     "移除外部知识库“" + name + "”",
-		Message:   "只会从语燕的列表中移除，不会删除原来的文件夹。",
+		Message:   "只会从 Swift 的列表中移除，不会删除原来的文件夹。",
 		OKLabel:   "移除",
 		Dangerous: true,
 		OnOK: func() {

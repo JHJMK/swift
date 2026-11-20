@@ -68,7 +68,7 @@ func (a *app) docTopBar(c *ui.Context, doc *docState) {
 			previewIcon = iconPencil
 			previewTip = "编辑"
 		}
-		preview := a.chromeIconButton(c, previewIcon, previewTip, a.previewMode)
+		preview := a.chromeIconButton(c, previewIcon, previewTip, false)
 		if preview.Clicked() {
 			a.previewMode = !a.previewMode
 			if a.isWebDoc() {
@@ -87,7 +87,7 @@ func (a *app) docTopBar(c *ui.Context, doc *docState) {
 			a.update()
 		}
 		dropdown(c, more, &a.docMoreOpen, func() {
-			menuItem(c, iconDownload, "导出 Markdown（含图片）", func() {
+			menuItem(c, iconDownload, "导出 Markdown", func() {
 				a.docMoreOpen = false
 				a.exportDoc("md")
 				a.update()
