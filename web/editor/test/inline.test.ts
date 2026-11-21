@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  bareUrlAt,
   delimiterRole,
   escapeMask,
   findEmphasisClose,
@@ -103,4 +104,27 @@ test("only ASCII punctuation can be escaped", () => {
   assert.equal(isEscapable("\\"), true);
   assert.equal(isEscapable("。"), false);
   assert.equal(isEscapable("5"), false);
+});
+
+test("bare URL keeps sentence punctuation out", () => {
+  const line = "见 https://leetcode.cn/problems/remove-element/description/。";
+  const at = line.indexOf("https");
+  assert.equal(
+    bareUrlAt(line, at),
+    "https://leetcode.cn/problems/remove-element/description/",
+  );
+});
+
+test("bare URL drops an unmatched closing parenthesis", () => {
+  assert.equal(bareUrlAt("(https://example.com)", 1), "https://example.com");
+  assert.equal(
+    bareUrlAt("https://en.wikipedia.org/wiki/Foo_(bar)", 0),
+    "https://en.wikipedia.org/wiki/Foo_(bar)",
+  );
+});
+
+test("bare URL needs a host", () => {
+  assert.equal(bareUrlAt("https://", 0), "");
+  assert.equal(bareUrlAt("http://a", 0), "http://a");
+  assert.equal(bareUrlAt("https://example.com.", 0), "https://example.com");
 });

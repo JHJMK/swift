@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { codeFenceDeletionRanges } from "../src/markdown.ts";
+import { codeFenceDeletionRanges, fencedCodeBlock } from "../src/markdown.ts";
 
 test("backspacing an opening fence also removes its closing fence", () => {
   const text = "```\ncode\n```\nafter";
@@ -40,4 +40,26 @@ test("deleting a complete fenced block uses the normal deletion", () => {
 test("an unclosed fence is left alone so it can be removed", () => {
   const text = "```\ncode\nafter";
   assert.equal(codeFenceDeletionRanges(text, 3, 3, false), null);
+});
+
+test("fencedCodeBlock keeps code literal and uses its language", () => {
+  assert.equal(
+    fencedCodeBlock('func search(nums []int, target int) int {\n\treturn -1\n}', "go"),
+    "```go\nfunc search(nums []int, target int) int {\n\treturn -1\n}\n```",
+  );
+});
+
+test("fencedCodeBlock grows the fence past backtick runs in the code", () => {
+  assert.equal(
+    fencedCodeBlock("before\n```\nafter", ""),
+    "````\nbefore\n```\nafter\n````",
+  );
+});
+
+test("fencedCodeBlock drops trailing blank lines", () => {
+  assert.equal(fencedCodeBlock("code\n\n\n", "text"), "```text\ncode\n```");
+});
+
+test("fencedCodeBlock keeps the info string to a language name", () => {
+  assert.equal(fencedCodeBlock("x", 'Go"\n```'), "```go\nx\n```");
 });

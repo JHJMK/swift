@@ -14,6 +14,7 @@ import {
 import { cachedMermaidSvg } from "./mermaid";
 import { renumberOrderedFrom } from "./lists";
 import {
+  bareUrlAt,
   delimiterRole,
   escapeMask,
   findEmphasisClose,
@@ -210,6 +211,15 @@ function build(
           continue;
         }
         i += run;
+        continue;
+      }
+      const bareUrl = bareUrlAt(text, i);
+      if (bareUrl) {
+        style(base + i, base + i + bareUrl.length, "swift-link", {
+          "data-href": bareUrl,
+          title: bareUrl,
+        });
+        i += bareUrl.length;
         continue;
       }
       if (ch === "!" && text[i + 1] === "[" && text[i + 2] === "[") {
@@ -626,7 +636,10 @@ function build(
     const heading = /^(#{1,6})(\s+)(.*)$/.exec(text);
     if (heading) {
       const level = heading[1].length;
-      addLine(n, `swift-heading swift-h${level}${isActive ? " swift-active-line" : ""}`);
+      // A heading followed directly by text needs the breathing room a
+      // blank line would otherwise give it.
+      const followed = n + 1 < lines.length && lines[n + 1].trim() !== "";
+      addLine(n, `swift-heading swift-h${level}${followed ? " swift-heading-follow" : ""}${isActive ? " swift-active-line" : ""}`);
       if (isActive) {
         style(line.from, line.from + heading[1].length, "swift-formatting");
         style(line.from + heading[1].length, line.from + heading[1].length + heading[2].length, "swift-formatting");

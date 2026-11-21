@@ -34,7 +34,7 @@ func (a *app) editorView(c *ui.Context) {
 					// page: a large title line above the text.
 					if doc.ShowTitle && (doc.ReadOnly || a.previewMode) {
 						ui.Text(c, doc.Title).FontSize(36).Bold().FillWidth()
-						ui.Box(c).Height(20)
+						ui.Box(c).Height(28)
 					} else if doc.ShowTitle {
 						title := ui.TextInputBase(c, &doc.TitleDraft).
 							Placeholder("请输入标题").
@@ -74,7 +74,7 @@ func (a *app) editorView(c *ui.Context) {
 							a.update()
 						}
 						doc.titleFocused = title.Focused()
-						ui.Box(c).Height(20)
+						ui.Box(c).Height(28)
 					}
 					theme := &richtext.Theme{ParagraphSpacing: 0.75}
 					for i := range theme.Headings {

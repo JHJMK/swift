@@ -113,3 +113,29 @@ export function findEmphasisClose(
   }
   return -1;
 }
+
+/** bareUrlAt returns the bare http(s) URL starting at index, with sentence
+ * punctuation trimmed. A closing bracket stays when the URL opened it, as
+ * in Wikipedia's Foo_(bar). It returns "" when no URL starts there. */
+export function bareUrlAt(text: string, index: number): string {
+  const match = /^https?:\/\/[^\s<>"'`\\]+/i.exec(text.slice(index));
+  if (!match) return "";
+  let url = match[0];
+  while (url.length > 0) {
+    const last = url[url.length - 1];
+    if (".,;:!?，。；：！？、".includes(last)) {
+      url = url.slice(0, -1);
+      continue;
+    }
+    if (last === ")" && !url.includes("(")) {
+      url = url.slice(0, -1);
+      continue;
+    }
+    if (last === "]" && !url.includes("[")) {
+      url = url.slice(0, -1);
+      continue;
+    }
+    break;
+  }
+  return url.slice(url.indexOf("://") + 3).length > 0 ? url : "";
+}

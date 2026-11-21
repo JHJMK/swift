@@ -71,48 +71,15 @@ func (a *app) pasteTextIntoWeb() {
 	a.sendWebInsertText(string(b), string(b))
 }
 
-// pasteFromMenuWeb pastes into the page: pictures become assets, rich
-// text becomes Markdown.
+// pasteFromMenuWeb asks the page to paste. The page reads the clipboard
+// through ReadClipboard, so HTML conversion, code blocks and pictures all
+// follow one path instead of a second Go conversion with different
+// escaping.
 func (a *app) pasteFromMenuWeb() {
 	if a.doc == nil || a.doc.ReadOnly || a.previewMode {
 		return
 	}
-	defer a.update()
-	if png := mygo.Clipboard.ReadImage(); png != nil {
-		result, err := a.webSaveAsset("图片.png", png, true)
-		if err != nil {
-			a.setError(err)
-			return
-		}
-		a.sendWebInsert(result.Text)
-		return
-	}
-	data, err := mygo.Clipboard.Read(transfer.HTML, richtext.RTF, transfer.Markdown, transfer.Text)
-	if err != nil {
-		return
-	}
-	plain, _ := data.Read(transfer.Text)
-	if b, err := data.Read(transfer.HTML); err == nil && len(b) > 0 {
-		md := richtext.ParseHTML(string(b)).Markdown()
-		if strings.TrimSpace(md) != "" {
-			a.sendWebInsertText(md, string(plain))
-			return
-		}
-	}
-	if b, err := data.Read(richtext.RTF); err == nil && len(b) > 0 {
-		md := richtext.ParseRTF(b).Markdown()
-		if strings.TrimSpace(md) != "" {
-			a.sendWebInsertText(md, string(plain))
-			return
-		}
-	}
-	if b, err := data.Read(transfer.Markdown); err == nil && len(b) > 0 {
-		a.sendWebInsertText(string(b), string(plain))
-		return
-	}
-	if b, err := data.Read(transfer.Text); err == nil && len(b) > 0 {
-		a.sendWebInsertText(string(b), string(b))
-	}
+	a.sendWebCommand("paste", false)
 }
 
 // webEditorClipboard is what the page's Paste menu items get: the
@@ -292,13 +259,7 @@ func (a *app) pasteAndMatchStyle() {
 		return
 	}
 	if a.isWebDoc() {
-		data, err := mygo.Clipboard.Read(transfer.Text)
-		if err != nil {
-			return
-		}
-		if b, err := data.Read(transfer.Text); err == nil && len(b) > 0 {
-			a.sendWebInsert(string(b))
-		}
+		a.sendWebCommand("paste-plain", false)
 		return
 	}
 	defer a.update()

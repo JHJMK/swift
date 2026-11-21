@@ -36,7 +36,9 @@ export type CommandName =
   | "focus"
   | "image"
   | "attachment"
-  | "save";
+  | "save"
+  | "paste"
+  | "paste-plain";
 
 export interface CommandPayload {
   command: CommandName;

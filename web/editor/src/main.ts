@@ -44,6 +44,7 @@ import {
   countCharacters,
   countWords,
   fenceAt,
+  fencedCodeBlock,
   outlineHeadings,
   parseFences,
   tableOnly,
@@ -1372,8 +1373,25 @@ async function handlePaste(event: ClipboardEvent) {
     return;
   }
   const html = data.getData("text/html");
+  // Inside a code block the text is literal: converting the clipboard's
+  // HTML would escape brackets and turn each source line into a paragraph.
+  // Take the code out of the HTML when it is there, otherwise let
+  // CodeMirror insert the plain text unchanged.
+  if (inFencedCode()) {
+    const code = html ? pastedCodeHTML(html) : null;
+    if (code) {
+      event.preventDefault();
+      insertText(code.text);
+    }
+    return;
+  }
   if (html && html.trim()) {
     event.preventDefault();
+    const code = pastedCodeHTML(html);
+    if (code) {
+      insertText(fencedCodeBlock(code.text, code.lang), { block: true });
+      return;
+    }
     const markdownText = turndown.turndown(html).trim();
     if (markdownText) insertPastedMarkdown(markdownText);
     return;
@@ -1399,6 +1417,66 @@ async function handlePaste(event: ClipboardEvent) {
   }
 }
 
+/** inFencedCode reports whether the caret sits in a fenced code block, so
+ * a paste there must stay literal text. */
+function inFencedCode(): boolean {
+  const doc = view.state.doc;
+  if (doc.length === 0) return false;
+  const line = doc.lineAt(view.state.selection.main.head).number - 1;
+  const lines: string[] = [];
+  for (let i = 1; i <= doc.lines; i++) lines.push(doc.line(i).text);
+  return fenceAt(parseFences(lines), line) !== undefined;
+}
+
+/** PastedCode is the text and language a clipboard's HTML holds. */
+interface PastedCode {
+  text: string;
+  lang: string;
+}
+
+/** pastedCodeHTML returns the code block a clipboard carries, or null when
+ * the clipboard is prose. Yuque and other CodeMirror editors serialize a
+ * copied highlighted block as one div per source line; reading those lines
+ * back keeps indentation, single line breaks and literal punctuation. */
+function pastedCodeHTML(html: string): PastedCode | null {
+  if (!html.trim()) return null;
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const container =
+    doc.querySelector<HTMLElement>(".ne-codeblock .cm-content") ??
+    doc.querySelector<HTMLElement>(".cm-content[data-language]") ??
+    doc.querySelector<HTMLElement>("pre code") ??
+    doc.querySelector<HTMLElement>("pre");
+  if (!container) return null;
+
+  const lines = container.querySelectorAll<HTMLElement>(".cm-line");
+  const text =
+    lines.length > 0
+      ? Array.from(lines, (line) => line.textContent ?? "").join("\n")
+      : container.textContent ?? "";
+  if (!text.trim()) return null;
+
+  // Convert only a clipboard that is just the code block. A selection with
+  // prose around the code keeps the regular HTML conversion.
+  const rest = doc.body.cloneNode(true) as HTMLElement;
+  rest.querySelectorAll("script, style").forEach((el) => el.remove());
+  const block = rest.querySelector<HTMLElement>(
+    ".ne-codeblock, .cm-content[data-language], pre",
+  );
+  block?.remove();
+  if ((rest.textContent ?? "").trim() !== "") return null;
+
+  const code = container.matches("code") ? container : container.querySelector("code");
+  let lang =
+    code?.getAttribute("data-language") ??
+    container.getAttribute("data-language") ??
+    "";
+  if (!lang) {
+    const match = /(?:^|\s)language-([\w+#.-]+)/.exec(code?.className ?? container.className);
+    if (match) lang = match[1];
+  }
+  return { text, lang: lang.trim().toLowerCase() };
+}
+
 /** pasteFromClipboard pastes through the app: the page's Paste menu and
  * Shift+Cmd+V read the system clipboard, which the page's own APIs cannot.
  * Rich text becomes Markdown as a native paste does; plain text goes in
@@ -1412,7 +1490,25 @@ async function pasteFromClipboard(plain: boolean): Promise<void> {
     return;
   }
   if (!clip || clip.done) return;
+  // A code block takes the clipboard literally, as a paste with the mouse
+  // does: no Markdown escaping and no paragraph breaks between its lines.
+  if (inFencedCode()) {
+    if (!plain && clip.html.trim()) {
+      const code = pastedCodeHTML(clip.html);
+      if (code) {
+        insertText(code.text);
+        return;
+      }
+    }
+    if (clip.text) insertText(clip.text);
+    return;
+  }
   if (!plain && clip.html.trim()) {
+    const code = pastedCodeHTML(clip.html);
+    if (code) {
+      insertText(fencedCodeBlock(code.text, code.lang), { block: true });
+      return;
+    }
     const markdown = turndown.turndown(clip.html).trim();
     if (markdown) {
       insertPastedMarkdown(markdown);
@@ -2369,6 +2465,12 @@ function handleCommand(payload: CommandPayload) {
       break;
     case "save":
       syncChanged();
+      break;
+    case "paste":
+      void pasteFromClipboard(false);
+      break;
+    case "paste-plain":
+      void pasteFromClipboard(true);
       break;
   }
 }
