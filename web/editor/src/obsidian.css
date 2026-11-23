@@ -45,7 +45,7 @@
   --inline-title-size: 1.618em;
   --inline-title-weight: 700;
   --inline-title-line-height: 1.2;
-  --inline-title-margin-bottom: 0.5em;
+  --inline-title-margin-bottom: 1em;
 
   --h1-size: 1.618em;
   --h2-size: 1.462em;
@@ -396,6 +396,10 @@ button {
 
 .cm-line.swift-heading {
   padding-top: 1rem;
+}
+
+.cm-line.swift-heading.swift-heading-follow {
+  padding-bottom: 0.5em;
 }
 
 .cm-line.swift-h1 {

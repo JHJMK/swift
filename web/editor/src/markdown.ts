@@ -198,6 +198,18 @@ export function fenceAt(fences: Fence[], line: number): Fence | undefined {
   return undefined;
 }
 
+/** fencedCodeBlock wraps code in a fence long enough to hold any backtick
+ * run of the code, so pasted code is not cut short by its own lines. */
+export function fencedCodeBlock(code: string, lang: string): string {
+  const body = code.replace(/\r\n/g, "\n").replace(/\n+$/, "");
+  let longest = 0;
+  const runs = body.match(/`+/g) ?? [];
+  for (const run of runs) longest = Math.max(longest, run.length);
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  const info = lang.trim().toLowerCase().replace(/[^a-z0-9_+#.-]/g, "");
+  return `${fence}${info}\n${body}\n${fence}`;
+}
+
 export interface TableBlock {
   fromLine: number;
   toLine: number;

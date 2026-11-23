@@ -920,7 +920,7 @@ func (a *app) homeView(c *ui.Context) {
 		ui.Box(c).Absolute().Left(0).Top(0).Right(0).Height(c.TitleBar().Height).DragWindow()
 		ui.Scroll(c).Grow(1).Children(func() {
 			ui.Column(c).FillWidth().Padding(40, 44).Gap(22).Children(func() {
-				ui.Column(c).Gap(4).Children(func() {
+				ui.Column(c).Gap(8).Children(func() {
 					ui.Text(c, "工作台").FontSize(28).Bold()
 					ui.Text(c, "记录、整理和回顾你的知识库").FontSize(14).TextColor(t.TextMuted)
 				})
