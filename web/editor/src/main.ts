@@ -2333,6 +2333,11 @@ function runSlash(index: number) {
 function updateSlashMenu(update: { docChanged: boolean; selectionSet: boolean }) {
   if (isReadOnly()) return;
   if (!update.docChanged && !update.selectionSet) return;
+  // A slash in a code block is source text, not a command.
+  if (inFencedCode()) {
+    if (slashOpen) closeSlash();
+    return;
+  }
   const { from } = view.state.selection.main;
   const before = view.state.sliceDoc(Math.max(0, from - 80), from);
   const match = /(^|\s)\/([^\s/]*)$/.exec(before);
@@ -2445,7 +2450,7 @@ function handleCommand(payload: CommandPayload) {
       closeSearchPanel(view);
       break;
     case "slash":
-      if (isReadOnly()) return;
+      if (isReadOnly() || inFencedCode()) return;
       openSlash(view.state.selection.main.from, "");
       break;
     case "preview":
